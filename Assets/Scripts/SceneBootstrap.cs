@@ -8,6 +8,40 @@ using Unity.Netcode.Transports.UTP;
 /// </summary>
 public class SceneBootstrap : MonoBehaviour
 {
+    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
+    static void SuppressSpamLogs()
+    {
+        // Relay transport ve bellek uyarılarını sustur (konsolu donduruyorlar)
+        Application.logMessageReceivedThreaded += (msg, stackTrace, type) => { };
+        Debug.unityLogger.logHandler = new FilteredLogHandler(Debug.unityLogger.logHandler);
+    }
+
+    private class FilteredLogHandler : ILogHandler
+    {
+        private ILogHandler defaultHandler;
+        public FilteredLogHandler(ILogHandler handler) { defaultHandler = handler; }
+
+        public void LogFormat(LogType logType, Object context, string format, params object[] args)
+        {
+            string msg = args.Length > 0 ? string.Format(format, args) : format;
+            if (msg.Contains("ALLOC_TEMP") || 
+                msg.Contains("unfreed allocations") ||
+                msg.Contains("diag-temp-memory") ||
+                msg.Contains("RelayMessageError") ||
+                msg.Contains("Relay/Messages") ||
+                msg.Contains("sport.Relay.Rela"))
+                return;
+            defaultHandler.LogFormat(logType, context, format, args);
+        }
+
+        public void LogException(System.Exception exception, Object context)
+        {
+            if (exception.Message.Contains("ALLOC_TEMP") || exception.Message.Contains("Relay"))
+                return;
+            defaultHandler.LogException(exception, context);
+        }
+    }
+
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
     static void OnAfterSceneLoad()
     {
