@@ -1,10 +1,16 @@
 using System.Collections;
 using System.Collections.Generic;
+using System.Threading.Tasks;
 using UnityEngine;
 using UnityEngine.UI;
 using UnityEngine.EventSystems;
 using Unity.Netcode;
 using Unity.Netcode.Transports.UTP;
+using Unity.Services.Core;
+using Unity.Services.Authentication;
+using Unity.Services.Relay;
+using Unity.Services.Relay.Models;
+using Unity.Networking.Transport.Relay;
 
 public class MainMenuManager : MonoBehaviour
 {
@@ -258,68 +264,93 @@ public class MainMenuManager : MonoBehaviour
         rulesPopup.SetActive(false); 
     }
 
+    private Text joinCodeDisplay;
+    private InputField joinCodeInput;
+    private GameObject statusText;
+
     private void CreateLobbyPopup()
     {
         lobbyPopup = new GameObject("LobbyPopup");
         lobbyPopup.transform.SetParent(menuCanvasObj.transform, false);
         ApplyGlassmorphism(lobbyPopup);
-        SetAnchorsAndOffset(lobbyPopup, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(850, 1100));
+        SetAnchorsAndOffset(lobbyPopup, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(850, 1300));
 
         GameObject title = CreateTextObj("LOBİ BAĞLANTISI", 55, FontStyle.Bold, new Color(1f, 0.8f, 0.1f));
         title.transform.SetParent(lobbyPopup.transform, false);
-        SetAnchorsAndOffset(title, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0, -100), new Vector2(600, 100));
+        SetAnchorsAndOffset(title, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0, -80), new Vector2(600, 100));
 
-        // Host Alanı
-        GameObject hostTitle = CreateTextObj("OYUN KUR (HOST)", 40, FontStyle.Bold, new Color(0.7f, 0.7f, 0.7f));
+        // --- Host Alanı ---
+        GameObject hostTitle = CreateTextObj("OYUN KUR (HOST)", 40, FontStyle.Bold, new Color(0.3f, 0.8f, 1f));
         hostTitle.transform.SetParent(lobbyPopup.transform, false);
-        SetAnchorsAndOffset(hostTitle, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0, -220), new Vector2(600, 80));
+        SetAnchorsAndOffset(hostTitle, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0, -190), new Vector2(600, 80));
 
         GameObject h2 = CreateButton("H2", "2 Oyuncu", 35, new Color(0.2f, 0.6f, 1f, 0.8f), Color.white);
         h2.transform.SetParent(lobbyPopup.transform, false);
-        SetAnchorsAndOffset(h2, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0, -320), new Vector2(400, 80));
+        SetAnchorsAndOffset(h2, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0, -280), new Vector2(400, 80));
         AddButtonHoverEffect(h2);
         h2.GetComponent<Button>().onClick.AddListener(() => StartHostGame(2));
 
         GameObject h3 = CreateButton("H3", "3 Oyuncu", 35, new Color(0.2f, 0.8f, 0.2f, 0.8f), Color.white);
         h3.transform.SetParent(lobbyPopup.transform, false);
-        SetAnchorsAndOffset(h3, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0, -420), new Vector2(400, 80));
+        SetAnchorsAndOffset(h3, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0, -370), new Vector2(400, 80));
         AddButtonHoverEffect(h3);
         h3.GetComponent<Button>().onClick.AddListener(() => StartHostGame(3));
 
         GameObject h4 = CreateButton("H4", "4 Oyuncu", 35, new Color(1f, 0.6f, 0.1f, 0.8f), Color.white);
         h4.transform.SetParent(lobbyPopup.transform, false);
-        SetAnchorsAndOffset(h4, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0, -520), new Vector2(400, 80));
+        SetAnchorsAndOffset(h4, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0, -460), new Vector2(400, 80));
         AddButtonHoverEffect(h4);
         h4.GetComponent<Button>().onClick.AddListener(() => StartHostGame(4));
 
-        // Join Alanı
-        GameObject joinTitle = CreateTextObj("ODAYA KATIL (CLIENT)", 40, FontStyle.Bold, new Color(0.7f, 0.7f, 0.7f));
-        joinTitle.transform.SetParent(lobbyPopup.transform, false);
-        SetAnchorsAndOffset(joinTitle, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0, -680), new Vector2(600, 80));
+        // Oda Kodu Göstergesi (Host olunca görünür)
+        GameObject codeLabel = CreateTextObj("ODA KODU:", 32, FontStyle.Bold, new Color(0.5f, 1f, 0.5f));
+        codeLabel.transform.SetParent(lobbyPopup.transform, false);
+        SetAnchorsAndOffset(codeLabel, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0, -560), new Vector2(400, 60));
+        codeLabel.SetActive(false);
 
-        GameObject inputObj = new GameObject("IPInput");
+        GameObject codeObj = CreateTextObj("------", 60, FontStyle.Bold, new Color(1f, 1f, 0.3f));
+        codeObj.transform.SetParent(lobbyPopup.transform, false);
+        SetAnchorsAndOffset(codeObj, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0, -620), new Vector2(500, 80));
+        joinCodeDisplay = codeObj.GetComponent<Text>();
+        codeObj.SetActive(false);
+
+        // --- Join Alanı ---
+        GameObject joinTitle = CreateTextObj("ODAYA KATIL (CLIENT)", 40, FontStyle.Bold, new Color(1f, 0.6f, 0.8f));
+        joinTitle.transform.SetParent(lobbyPopup.transform, false);
+        SetAnchorsAndOffset(joinTitle, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0, -740), new Vector2(600, 80));
+
+        GameObject inputObj = new GameObject("JoinCodeInput");
         inputObj.transform.SetParent(lobbyPopup.transform, false);
         Image inputBg = inputObj.AddComponent<Image>();
         inputBg.color = new Color(0.9f, 0.9f, 0.9f, 0.9f);
-        SetAnchorsAndOffset(inputObj, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0, -780), new Vector2(500, 80));
+        SetAnchorsAndOffset(inputObj, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0, -840), new Vector2(500, 80));
         
-        GameObject textObj = CreateTextObj("127.0.0.1", 35, FontStyle.Normal, Color.black);
+        GameObject textObj = CreateTextObj("Oda Kodunu Gir", 35, FontStyle.Normal, Color.black);
         textObj.transform.SetParent(inputObj.transform, false);
         SetAnchorsAndOffset(textObj, Vector2.zero, Vector2.one, Vector2.zero);
         
-        ipInput = inputObj.AddComponent<InputField>();
-        ipInput.textComponent = textObj.GetComponent<Text>();
-        ipInput.text = "127.0.0.1";
+        joinCodeInput = inputObj.AddComponent<InputField>();
+        joinCodeInput.textComponent = textObj.GetComponent<Text>();
+        joinCodeInput.text = "";
+        joinCodeInput.characterLimit = 6;
+
+        // Eski ipInput referansını da koruyalım (uyumluluk)
+        ipInput = joinCodeInput;
 
         GameObject jBtn = CreateButton("Join", "BAĞLAN", 40, new Color(0.8f, 0.2f, 0.8f, 0.8f), Color.white);
         jBtn.transform.SetParent(lobbyPopup.transform, false);
-        SetAnchorsAndOffset(jBtn, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0, -880), new Vector2(400, 80));
+        SetAnchorsAndOffset(jBtn, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0, -940), new Vector2(400, 80));
         AddButtonHoverEffect(jBtn);
         jBtn.GetComponent<Button>().onClick.AddListener(JoinGame);
 
+        // Durum Mesajı
+        statusText = CreateTextObj("", 28, FontStyle.Italic, new Color(0.8f, 0.8f, 0.8f));
+        statusText.transform.SetParent(lobbyPopup.transform, false);
+        SetAnchorsAndOffset(statusText, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0, -1040), new Vector2(700, 60));
+
         GameObject closeBtn = CreateButton("CloseLobby", "İPTAL", 35, new Color(0.8f, 0.2f, 0.3f, 0.8f), Color.white);
         closeBtn.transform.SetParent(lobbyPopup.transform, false);
-        SetAnchorsAndOffset(closeBtn, new Vector2(0.5f, 0f), new Vector2(0.5f, 0f), new Vector2(0, 80), new Vector2(350, 80));
+        SetAnchorsAndOffset(closeBtn, new Vector2(0.5f, 0f), new Vector2(0.5f, 0f), new Vector2(0, 60), new Vector2(350, 80));
         AddButtonHoverEffect(closeBtn);
         closeBtn.GetComponent<Button>().onClick.AddListener(() => { StartCoroutine(SlidePopup(lobbyPopup, false)); });
 
@@ -370,9 +401,9 @@ public class MainMenuManager : MonoBehaviour
             popup.SetActive(false);
         }
     }
-    private ushort FindAvailablePort(ushort startPort)
+    private ushort FindAvailablePort(ushort startPort = 7777)
     {
-        for (ushort port = startPort; port < startPort + 10; port++)
+        for (ushort port = startPort; port < startPort + 100; port++)
         {
             try
             {
@@ -382,122 +413,162 @@ public class MainMenuManager : MonoBehaviour
                     System.Net.Sockets.ProtocolType.Udp))
                 {
                     socket.Bind(new System.Net.IPEndPoint(System.Net.IPAddress.Loopback, port));
-                    return port; // Bulundu!
+                    return port;
                 }
             }
-            catch
-            {
-                // Port kullanımda, bir sonrakini dene
-            }
+            catch { }
         }
-        return startPort; // Fallback
+        return startPort;
     }
 
-    private void StartHostGame(int playerCount)
+    private void SetStatus(string msg)
     {
-        StartCoroutine(StartHostGameCoroutine(playerCount));
+        if (statusText != null)
+            statusText.GetComponent<Text>().text = msg;
+        Debug.Log($"[Relay] {msg}");
     }
 
-    private IEnumerator StartHostGameCoroutine(int playerCount)
+    private async Task InitializeUnityServices()
     {
-        Debug.Log($"[MainMenuManager] StartHostGameCoroutine called with playerCount = {playerCount}");
-        
-        menuCanvasObj.SetActive(false);
-        AudioManager.Instance?.StopAmbiance();
-
-        // Eğer NetworkManager zaten dinlemiyorsa, boşta olan bir port bularak StartHost çağır
-        if (!NetworkManager.Singleton.IsListening)
+        if (UnityServices.State != ServicesInitializationState.Initialized)
         {
-            var transport = NetworkManager.Singleton.GetComponent<UnityTransport>();
-            if (transport != null)
-            {
-                ushort freePort = FindAvailablePort(7777);
-                transport.ConnectionData.Port = freePort;
-                Debug.Log($"[MainMenuManager] Dynamic Port Selection: Bound Host to free port {freePort}");
-            }
-            
-            // SİHİRLİ DOKUNUŞ: Klon önbellek uyuşmazlığını engellemek için prefab zorlamasını kapatıyoruz!
-            NetworkManager.Singleton.NetworkConfig.ForceSamePrefabs = false;
-            
-            // SİHİRLİ DOKUNUŞ 2: Kullanıcı sahneyi (Untitled) kaydetmediği için SceneManagement çöküyor, bunu kapatıyoruz!
-            NetworkManager.Singleton.NetworkConfig.EnableSceneManagement = false;
-            
-            // PREFAB'LARI GÜVENLİ ŞEKİLDE KAYDET (Çift kayıt hatasını önleyerek)
-            GameObject magnetPrefab = Resources.Load<GameObject>("MagnetPiecePrefab");
-            GameObject netGmPrefab = Resources.Load<GameObject>("GameManagerPrefab");
-            
-            if (magnetPrefab != null && !NetworkManager.Singleton.NetworkConfig.Prefabs.Contains(magnetPrefab))
-                NetworkManager.Singleton.AddNetworkPrefab(magnetPrefab);
-                
-            if (netGmPrefab != null && !NetworkManager.Singleton.NetworkConfig.Prefabs.Contains(netGmPrefab))
-                NetworkManager.Singleton.AddNetworkPrefab(netGmPrefab);
-            
-            NetworkManager.Singleton.StartHost();
+            await UnityServices.InitializeAsync();
         }
-
-        // NetworkManager'ın tamamen aktif olmasını (IsListening = true) bekle
-        float timeout = 2.0f;
-        while (!NetworkManager.Singleton.IsListening && timeout > 0f)
+        if (!AuthenticationService.Instance.IsSignedIn)
         {
-            timeout -= Time.deltaTime;
-            yield return null;
+            await AuthenticationService.Instance.SignInAnonymouslyAsync();
         }
-
-        if (!NetworkManager.Singleton.IsListening)
-        {
-            Debug.LogError("[MainMenuManager] NetworkManager failed to start listening!");
-            yield break;
-        }
-
-        // Eğer zaten bir GameManager varsa (SceneBootstrap'tan kalma), onu kullan
-        if (GameManager.Instance != null)
-        {
-            Debug.Log($"[MainMenuManager] Using existing GameManager, starting with {playerCount} players");
-            GameManager.Instance.StartGameFromMenu(playerCount);
-            yield break;
-        }
-
-        GameObject gmPrefab = Resources.Load<GameObject>("GameManagerPrefab");
-        if (gmPrefab != null)
-        {
-            GameObject gmObj = Instantiate(gmPrefab);
-            gmObj.GetComponent<NetworkObject>().Spawn();
-            gmObj.GetComponent<GameManager>().StartGameFromMenu(playerCount);
-            Debug.Log($"[MainMenuManager] Spawned new GameManager with {playerCount} players");
-        }
-        else
-        {
-            Debug.LogError("GameManagerPrefab not found in Resources!");
-        }
+        Debug.Log("[Relay] Unity Services hazır, anonim giriş yapıldı.");
     }
 
-    private void JoinGame()
+    private void ConfigureNetworkManager()
     {
-        menuCanvasObj.SetActive(false);
-        AudioManager.Instance?.StopAmbiance();
-
-        string ip = ipInput.text;
-        if (string.IsNullOrEmpty(ip)) ip = "127.0.0.1";
-        
-        var transport = NetworkManager.Singleton.GetComponent<UnityTransport>();
-        transport.ConnectionData.Address = ip;
-        
-        // SİHİRLİ DOKUNUŞ: Klon önbellek uyuşmazlığını engellemek için prefab zorlamasını kapatıyoruz!
         NetworkManager.Singleton.NetworkConfig.ForceSamePrefabs = false;
-
-        // SİHİRLİ DOKUNUŞ 2: Kullanıcı sahneyi (Untitled) kaydetmediği için SceneManagement çöküyor, bunu kapatıyoruz!
         NetworkManager.Singleton.NetworkConfig.EnableSceneManagement = false;
-
-        // PREFAB'LARI GÜVENLİ ŞEKİLDE KAYDET (Çift kayıt hatasını önleyerek)
+        
         GameObject magnetPrefab = Resources.Load<GameObject>("MagnetPiecePrefab");
         GameObject netGmPrefab = Resources.Load<GameObject>("GameManagerPrefab");
         
         if (magnetPrefab != null && !NetworkManager.Singleton.NetworkConfig.Prefabs.Contains(magnetPrefab))
             NetworkManager.Singleton.AddNetworkPrefab(magnetPrefab);
-            
         if (netGmPrefab != null && !NetworkManager.Singleton.NetworkConfig.Prefabs.Contains(netGmPrefab))
             NetworkManager.Singleton.AddNetworkPrefab(netGmPrefab);
+    }
+
+    private void StartHostGame(int playerCount)
+    {
+        StartHostWithRelay(playerCount);
+    }
+
+    private async void StartHostWithRelay(int playerCount)
+    {
+        SetStatus("Sunucu hazırlanıyor...");
         
-        NetworkManager.Singleton.StartClient();
+        try
+        {
+            await InitializeUnityServices();
+            SetStatus("Relay sunucusuna bağlanılıyor...");
+
+            // Relay allocation oluştur (maxConnections = playerCount - 1, host kendisi sayılmıyor)
+            Allocation allocation = await RelayService.Instance.CreateAllocationAsync(playerCount - 1);
+            string joinCode = await RelayService.Instance.GetJoinCodeAsync(allocation.AllocationId);
+            
+            Debug.Log($"[Relay] Oda kodu: {joinCode}");
+
+            // Oda kodunu ekranda göster
+            if (joinCodeDisplay != null)
+            {
+                joinCodeDisplay.text = joinCode;
+                joinCodeDisplay.gameObject.SetActive(true);
+                // ODA KODU label'ını da göster
+                foreach (Transform child in lobbyPopup.transform)
+                {
+                    Text t = child.GetComponent<Text>();
+                    if (t != null && t.text == "ODA KODU:")
+                        child.gameObject.SetActive(true);
+                }
+            }
+
+            // Transport'u Relay ile konfigüre et
+            var transport = NetworkManager.Singleton.GetComponent<UnityTransport>();
+            var relayServerData = AllocationUtils.ToRelayServerData(allocation, "dtls");
+            transport.SetRelayServerData(relayServerData);
+
+            ConfigureNetworkManager();
+            NetworkManager.Singleton.StartHost();
+
+            SetStatus($"Oda kuruldu! Kod: {joinCode}");
+
+            // Oyunu başlat
+            await Task.Delay(500); // NetworkManager'ın başlamasını bekle
+            
+            if (GameManager.Instance != null)
+            {
+                GameManager.Instance.StartGameFromMenu(playerCount);
+            }
+            else
+            {
+                GameObject gmPrefab = Resources.Load<GameObject>("GameManagerPrefab");
+                if (gmPrefab != null)
+                {
+                    GameObject gmObj = Instantiate(gmPrefab);
+                    gmObj.GetComponent<NetworkObject>().Spawn();
+                    gmObj.GetComponent<GameManager>().StartGameFromMenu(playerCount);
+                }
+            }
+
+            // Menüyü gizle
+            menuCanvasObj.SetActive(false);
+            AudioManager.Instance?.StopAmbiance();
+        }
+        catch (System.Exception e)
+        {
+            SetStatus($"HATA: {e.Message}");
+            Debug.LogError($"[Relay] Host başlatma hatası: {e}");
+        }
+    }
+
+    private void JoinGame()
+    {
+        string code = joinCodeInput != null ? joinCodeInput.text.Trim().ToUpper() : "";
+        if (string.IsNullOrEmpty(code) || code.Length < 4)
+        {
+            SetStatus("Lütfen geçerli bir oda kodu girin!");
+            return;
+        }
+        JoinWithRelay(code);
+    }
+
+    private async void JoinWithRelay(string joinCode)
+    {
+        SetStatus("Odaya bağlanılıyor...");
+        
+        try
+        {
+            await InitializeUnityServices();
+            SetStatus($"Kod: {joinCode} ile bağlanılıyor...");
+
+            // Relay'e katıl
+            JoinAllocation joinAllocation = await RelayService.Instance.JoinAllocationAsync(joinCode);
+
+            // Transport'u Relay ile konfigüre et
+            var transport = NetworkManager.Singleton.GetComponent<UnityTransport>();
+            var relayServerData = AllocationUtils.ToRelayServerData(joinAllocation, "dtls");
+            transport.SetRelayServerData(relayServerData);
+
+            ConfigureNetworkManager();
+            NetworkManager.Singleton.StartClient();
+
+            SetStatus("Bağlandı! Oyun yükleniyor...");
+
+            // Menüyü gizle
+            menuCanvasObj.SetActive(false);
+            AudioManager.Instance?.StopAmbiance();
+        }
+        catch (System.Exception e)
+        {
+            SetStatus($"HATA: {e.Message}");
+            Debug.LogError($"[Relay] Bağlantı hatası: {e}");
+        }
     }
 }
