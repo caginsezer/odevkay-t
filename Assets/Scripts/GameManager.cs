@@ -261,8 +261,24 @@ public class GameManager : NetworkBehaviour
             playerRemainingMagnets[pIndex]--;
         }
 
+        // TÜM CLIENT'LARA taş tüketme bildirimi gönder (görsel senkronizasyon)
+        ConsumeStoneClientRpc(currentPlayer.Value);
+
         currentState.Value = GameState.CheckingAttraction;
         StartCoroutine(CheckAttractionsAfterDelay());
+    }
+
+    [ClientRpc]
+    private void ConsumeStoneClientRpc(int playerID)
+    {
+        // Host zaten yerel olarak taşı tüketti, tekrar silme
+        if (IsServer) return;
+        
+        var reserveMgr = FindAnyObjectByType<StoneReserveManager>();
+        if (reserveMgr != null)
+        {
+            reserveMgr.TryConsumeStone(playerID);
+        }
     }
 
     private IEnumerator CheckAttractionsAfterDelay()

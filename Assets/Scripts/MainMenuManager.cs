@@ -11,6 +11,7 @@ using Unity.Services.Authentication;
 using Unity.Services.Relay;
 using Unity.Services.Relay.Models;
 using Unity.Networking.Transport.Relay;
+using RelayServerData = Unity.Networking.Transport.Relay.RelayServerData;
 
 public class MainMenuManager : MonoBehaviour
 {
@@ -491,8 +492,7 @@ public class MainMenuManager : MonoBehaviour
 
             // Transport'u Relay ile konfigüre et
             var transport = NetworkManager.Singleton.GetComponent<UnityTransport>();
-            var relayServerData = AllocationUtils.ToRelayServerData(allocation, "dtls");
-            transport.SetRelayServerData(relayServerData);
+            transport.SetRelayServerData(new RelayServerData(allocation, "dtls"));
 
             ConfigureNetworkManager();
             NetworkManager.Singleton.StartHost();
@@ -553,8 +553,7 @@ public class MainMenuManager : MonoBehaviour
 
             // Transport'u Relay ile konfigüre et
             var transport = NetworkManager.Singleton.GetComponent<UnityTransport>();
-            var relayServerData = AllocationUtils.ToRelayServerData(joinAllocation, "dtls");
-            transport.SetRelayServerData(relayServerData);
+            transport.SetRelayServerData(new RelayServerData(joinAllocation, "dtls"));
 
             ConfigureNetworkManager();
             NetworkManager.Singleton.StartClient();
