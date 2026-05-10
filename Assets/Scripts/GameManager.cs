@@ -271,8 +271,23 @@ public class GameManager : NetworkBehaviour
     [ClientRpc]
     private void ConsumeStoneClientRpc(int playerID)
     {
-        // Host zaten yerel olarak taşı tüketti, tekrar silme
-        if (IsServer) return;
+        // Taşı koyan oyuncu zaten yerel olarak tüketmiş, tekrar silme
+        // Diğer tüm clientlar (Host dahil) taşı tüketsin
+        int localPlayerID;
+        if (NetworkManager.Singleton.IsServer)
+        {
+            if (NetworkManager.Singleton.ConnectedClientsList.Count <= 1)
+                localPlayerID = currentPlayer.Value;
+            else
+                localPlayerID = 1; // Host = Oyuncu 1
+        }
+        else
+        {
+            localPlayerID = (int)NetworkManager.Singleton.LocalClientId + 1;
+        }
+        
+        // Bu taşı koyan oyuncuysak, zaten yerel olarak tükettik, atla
+        if (localPlayerID == playerID) return;
         
         var reserveMgr = FindAnyObjectByType<StoneReserveManager>();
         if (reserveMgr != null)

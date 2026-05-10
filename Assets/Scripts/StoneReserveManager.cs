@@ -27,6 +27,9 @@ public class StoneReserveManager : MonoBehaviour
 
     public void Initialize(int stonesPerPlayer, int playerCount)
     {
+        // Deterministik seed: Her iki editörde de aynı taş pozisyonları oluşsun
+        Random.InitState(42);
+        
         p1Stones = new GameObject[stonesPerPlayer];
         p2Stones = new GameObject[stonesPerPlayer];
 
