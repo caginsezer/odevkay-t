@@ -1,4 +1,6 @@
 using UnityEngine;
+using Unity.Netcode;
+using Unity.Netcode.Transports.UTP;
 
 /// <summary>
 /// Sahne başlatıcı - Tüm sistemleri sırayla ayağa kaldırır.
@@ -9,8 +11,6 @@ public class SceneBootstrap : MonoBehaviour
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
     static void OnAfterSceneLoad()
     {
-        if (GameManager.Instance != null) return;
-
         Debug.Log("=== Miknatıs Oyunu Baslatiliyor ===");
 
         // 1. EventSystem (UI tıklamaları için en başta olmalı)
@@ -19,13 +19,38 @@ public class SceneBootstrap : MonoBehaviour
             {
                 GameObject eventSystem = new GameObject("EventSystem");
                 eventSystem.AddComponent<UnityEngine.EventSystems.EventSystem>();
-                // Yeni Input System için gerekli modül
                 eventSystem.AddComponent<UnityEngine.InputSystem.UI.InputSystemUIInputModule>();
                 Debug.Log("📱 Olay sistemi (New Input System) aktif edildi.");
             }
         } catch (System.Exception e) { Debug.LogError("EventSystem Init Error: " + e); }
 
-        // 2. Temel Sistemler (Managerlar)
+        // 2. NetworkManager (Multiplayer için şart - en başta olmalı)
+        try {
+            if (Object.FindAnyObjectByType<NetworkManager>() == null)
+            {
+                // Prefab varsa onu kullan
+                GameObject nmPrefab = Resources.Load<GameObject>("NetworkManagerPrefab");
+                if (nmPrefab != null)
+                {
+                    GameObject nmObj = Object.Instantiate(nmPrefab);
+                    nmObj.name = "NetworkManager";
+                    Object.DontDestroyOnLoad(nmObj);
+                    Debug.Log("🌐 NetworkManager (Prefab) sahneye eklendi.");
+                }
+                else
+                {
+                    // Prefab yoksa elle oluştur
+                    GameObject nmObj = new GameObject("NetworkManager");
+                    NetworkManager nm = nmObj.AddComponent<NetworkManager>();
+                    UnityTransport ut = nmObj.AddComponent<UnityTransport>();
+                    nm.NetworkConfig.NetworkTransport = ut;
+                    Object.DontDestroyOnLoad(nmObj);
+                    Debug.Log("🌐 NetworkManager (Manuel) sahneye eklendi.");
+                }
+            }
+        } catch (System.Exception e) { Debug.LogError("NetworkManager Init Error: " + e); }
+
+        // 3. Temel Sistemler (Managerlar)
         try {
             if (Object.FindAnyObjectByType<AudioManager>() == null)
             {
@@ -40,12 +65,7 @@ public class SceneBootstrap : MonoBehaviour
             }
         } catch (System.Exception e) { Debug.LogError("IntroController Init Error: " + e); }
 
-        try {
-            GameObject gmObj = new GameObject("GameManager");
-            gmObj.AddComponent<GameManager>();
-        } catch (System.Exception e) { Debug.LogError("GameManager Init Error: " + e); }
-
-        // 3. Kamera Kurulumu
+        // 4. Kamera Kurulumu
         try {
             Camera mainCam = Camera.main;
             if (mainCam == null)
@@ -57,25 +77,19 @@ public class SceneBootstrap : MonoBehaviour
             }
 
             mainCam.clearFlags = CameraClearFlags.SolidColor;
-            mainCam.backgroundColor = new Color(0.28f, 0.16f, 0.07f); // Koyu ahşap
+            mainCam.backgroundColor = new Color(0.05f, 0.05f, 0.08f); // Koyu tema arka plan
             mainCam.nearClipPlane = 0.1f;
             mainCam.farClipPlane = 100f;
             mainCam.orthographic = true;
-            mainCam.orthographicSize = 8.5f; // Dikey ekrana tam sığması için
+            mainCam.orthographicSize = 10f;
             mainCam.transform.position = new Vector3(0, 15f, 0);
             mainCam.transform.rotation = Quaternion.Euler(90f, 0, 0);
 
-            // 4. Kamera Kontrolcüsü
+            // Kamera Kontrolcüsü
             CameraController camController = mainCam.gameObject.GetComponent<CameraController>();
             if (camController == null) camController = mainCam.gameObject.AddComponent<CameraController>();
             camController.SetupExistingCamera(mainCam);
         } catch (System.Exception e) { Debug.LogError("Camera Init Error: " + e); }
-
-        // Global Volume/Post-process temizliği (Bazen URP projelerinde pembe ekrana sebep olabilir)
-        try {
-            var volumes = Object.FindObjectsByType<UnityEngine.Rendering.Volume>(FindObjectsSortMode.None);
-            foreach (var vol in volumes) Object.DestroyImmediate(vol.gameObject);
-        } catch (System.Exception e) { Debug.LogError("Volume Cleanup Error: " + e); }
 
         // 5. Işıklandırma
         try {
@@ -86,33 +100,74 @@ public class SceneBootstrap : MonoBehaviour
         GameObject boardObj = null;
         BoardSetup boardSetup = null;
         try {
-            boardObj = new GameObject("BoardController");
-            boardSetup = boardObj.AddComponent<BoardSetup>();
-            boardSetup.CreateBoard();
+            boardSetup = Object.FindAnyObjectByType<BoardSetup>();
+            if (boardSetup == null)
+            {
+                boardObj = new GameObject("BoardController");
+                boardSetup = boardObj.AddComponent<BoardSetup>();
+                boardSetup.CreateBoard();
+                Debug.Log("🎲 BoardSetup (Yeni) oluşturuldu.");
+            }
+            else
+            {
+                Debug.Log("🎲 BoardSetup zaten sahne üzerinde mevcut.");
+            }
         } catch (System.Exception e) { Debug.LogError("Board Setup Error: " + e); }
 
         try {
-            GameObject reserveObj = new GameObject("StoneReserveManager");
-            reserveObj.AddComponent<StoneReserveManager>();
+            if (Object.FindAnyObjectByType<StoneReserveManager>() == null)
+            {
+                GameObject reserveObj = new GameObject("StoneReserveManager");
+                reserveObj.AddComponent<StoneReserveManager>();
+                Debug.Log("💎 StoneReserveManager (Yeni) oluşturuldu.");
+            }
+            else
+            {
+                Debug.Log("💎 StoneReserveManager zaten sahne üzerinde mevcut.");
+            }
         } catch (System.Exception e) { Debug.LogError("StoneReserveManager Setup Error: " + e); }
 
         try {
-            GameObject placementObj = new GameObject("PlacementController");
-            PlacementController placement = placementObj.AddComponent<PlacementController>();
-            if (boardSetup != null) placement.Initialize(boardSetup, Camera.main);
+            if (Object.FindAnyObjectByType<PlacementController>() == null)
+            {
+                GameObject placementObj = new GameObject("PlacementController");
+                PlacementController placement = placementObj.AddComponent<PlacementController>();
+                if (boardSetup != null) placement.Initialize(boardSetup, Camera.main);
+                Debug.Log("🎯 PlacementController (Yeni) oluşturuldu.");
+            }
+            else
+            {
+                Debug.Log("🎯 PlacementController zaten sahne üzerinde mevcut.");
+            }
         } catch (System.Exception e) { Debug.LogError("PlacementController Setup Error: " + e); }
 
         // 7. Arayüzler (UI)
         try {
-            GameObject uiObj = new GameObject("UIManager");
-            UIManager ui = uiObj.AddComponent<UIManager>();
-            ui.Initialize();
+            if (Object.FindAnyObjectByType<UIManager>() == null)
+            {
+                GameObject uiObj = new GameObject("UIManager");
+                UIManager ui = uiObj.AddComponent<UIManager>();
+                ui.Initialize();
+                Debug.Log("🖥️ UIManager (Yeni) oluşturuldu.");
+            }
+            else
+            {
+                Debug.Log("🖥️ UIManager zaten sahne üzerinde mevcut.");
+            }
         } catch (System.Exception e) { Debug.LogError("UIManager Init Error: " + e); }
 
         try {
-            GameObject menuObj = new GameObject("MainMenuManager");
-            MainMenuManager menu = menuObj.AddComponent<MainMenuManager>();
-            menu.Initialize();
+            if (Object.FindAnyObjectByType<MainMenuManager>() == null)
+            {
+                GameObject menuObj = new GameObject("MainMenuManager");
+                MainMenuManager menu = menuObj.AddComponent<MainMenuManager>();
+                menu.Initialize();
+                Debug.Log("📜 MainMenuManager (Yeni) oluşturuldu.");
+            }
+            else
+            {
+                Debug.Log("📜 MainMenuManager zaten sahne üzerinde mevcut.");
+            }
         } catch (System.Exception e) { Debug.LogError("MainMenuManager Init Error: " + e); }
 
         // 8. Mobil ve Uygulama Ayarları

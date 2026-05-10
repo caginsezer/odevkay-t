@@ -1,0 +1,21 @@
+{
+    "name": "GameEditorScripts",
+    "rootNamespace": "",
+    "references": [
+        "GameScripts",
+        "Unity.Netcode.Runtime",
+        "Unity.Netcode.Components",
+        "Unity.Netcode.Editor"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

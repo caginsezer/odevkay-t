@@ -1,33 +1,26 @@
 using UnityEngine;
+using Unity.Netcode;
 
-/// <summary>
-/// Taşı yan panelden sürükleyerek daire içine bırakma mekaniği.
-/// Oyuncu 1 (sol panel) ve Oyuncu 2 (sağ panel) kendi taraflarından taş çeker.
-/// </summary>
 public class PlacementController : MonoBehaviour
 {
     private BoardSetup boardSetup;
     private Camera mainCamera;
-    private bool canPlace = true;
 
     private Texture2D handCursorTex;
     private GameObject handCursorObj;
 
-    // Sürükleme durumu
     private MagnetPiece draggedStone = null;
     private bool isDragging = false;
     private int draggingPlayerID = 0;
 
-    // Panel sınırları (oval dışı tıklama alanları)
-    // Board radius Z = 4.9, yani sınır yaklaşık 5.0f
-    private const float PANEL_THRESHOLD = 5.0f;
+    private const float PANEL_THRESHOLD = 3.6f; // Dikey eksen sınırı
+    private const float PANEL_THRESHOLD_X = 2.8f; // Yatay eksen sınırı
 
     public void Initialize(BoardSetup board, Camera camera)
     {
         boardSetup = board;
         mainCamera = camera;
 
-        // El ikonunu yükle
         try {
             string texPath = System.IO.Path.Combine(Application.dataPath, "Textures", "hand_cursor.png");
             if (System.IO.File.Exists(texPath))
@@ -44,27 +37,41 @@ public class PlacementController : MonoBehaviour
     private void Update()
     {
         if (GameManager.Instance == null) return;
-        if (GameManager.Instance.currentState != GameManager.GameState.WaitingForPlacement)
+        
+        // NetworkManager kontrolü - bağlı değilse (henüz host/client başlamamışsa) çık
+        if (NetworkManager.Singleton == null || !NetworkManager.Singleton.IsListening) return;
+
+        int localPlayerID = 1;
+        if (NetworkManager.Singleton.IsServer)
         {
-            CancelDrag();
+            // Eğer bağlı başka bir istemci yoksa (tek cihazda test veya Hotseat oynanıyorsa),
+            // o anki aktif oyuncu kimse onun taşlarını kontrol etmeye izin ver.
+            if (NetworkManager.Singleton.ConnectedClientsList.Count <= 1)
+            {
+                localPlayerID = GameManager.Instance.currentPlayer.Value;
+            }
+            else
+            {
+                localPlayerID = 1; // Online oyunda Host her zaman 1. oyuncudur
+            }
+        }
+        else
+        {
+            // İstemciler sadece kendi ID'lerine ait taşları oynatabilir
+            localPlayerID = (int)NetworkManager.Singleton.LocalClientId + 1;
+        }
+
+        if (GameManager.Instance.currentState.Value != GameManager.GameState.WaitingForPlacement || 
+            GameManager.Instance.currentPlayer.Value != localPlayerID)
+        {
+            if (isDragging) CancelDrag();
             return;
         }
 
-        // Zaman aşımından dolayı sıra aniden değişirse (zaman bitmesi)
-        if (isDragging && draggingPlayerID != GameManager.Instance.currentPlayer)
-        {
-            CancelDrag();
-            return;
-        }
-
-        // Mobil/Editor unified input (New Input System)
-        HandleUnifiedInput();
+        HandleUnifiedInput(localPlayerID);
     }
 
-    // ──────────────────────────────────────────────
-    //  UNIFIED INPUT (MOUSE & TOUCH)
-    // ──────────────────────────────────────────────
-    private void HandleUnifiedInput()
+    private void HandleUnifiedInput(int localPlayerID)
     {
         if (UnityEngine.InputSystem.Pointer.current == null) return;
 
@@ -73,7 +80,7 @@ public class PlacementController : MonoBehaviour
 
         if (pointer.press.wasPressedThisFrame)
         {
-            TryStartDrag(screenPos);
+            TryStartDrag(screenPos, localPlayerID);
         }
         else if (pointer.press.isPressed && isDragging)
         {
@@ -81,37 +88,25 @@ public class PlacementController : MonoBehaviour
         }
         else if (pointer.press.wasReleasedThisFrame && isDragging)
         {
-            TryDropStone(screenPos);
+            TryDropStone(screenPos, localPlayerID);
         }
     }
 
-    // ──────────────────────────────────────────────
-    //  SÜRÜKLEME BAŞLAT
-    //  Tıklama yeri oyuncunun panel tarafına düşüyorsa taşı al
-    // ──────────────────────────────────────────────
-    private void TryStartDrag(Vector2 screenPos)
+    private void TryStartDrag(Vector2 screenPos, int localPlayerID)
     {
-        // EventSystem UI kontrolü
         if (UnityEngine.EventSystems.EventSystem.current != null &&
             UnityEngine.EventSystems.EventSystem.current.IsPointerOverGameObject())
             return;
 
-        int currentPlayer = GameManager.Instance.currentPlayer;
-
-        // Rezervde taş var mı?
-        if (StoneReserveManager.Instance == null || !StoneReserveManager.Instance.HasStones(currentPlayer))
+        if (StoneReserveManager.Instance == null || !StoneReserveManager.Instance.HasStones(localPlayerID))
             return;
 
-        // ── 1) Raycast ile tıklanan taşı bul ──
         Ray ray = mainCamera.ScreenPointToRay(screenPos);
         GameObject hitStone = null;
-
-        // QueryTriggerInteraction.Collide: Trigger collider'lara da çarpsın
         RaycastHit[] hits = Physics.RaycastAll(ray, 30f, Physics.AllLayers, QueryTriggerInteraction.Collide);
         float closestDist = float.MaxValue;
 
-        // Mevcut oyuncunun taş isim önekini kontrol et ("ReserveStone_P1_" veya "ReserveStone_P2_")
-        string prefix = $"ReserveStone_P{currentPlayer}_";
+        string prefix = $"ReserveStone_P{localPlayerID}_";
         foreach (var hit in hits)
         {
             if (hit.collider.gameObject.name.StartsWith(prefix) && hit.distance < closestDist)
@@ -121,42 +116,33 @@ public class PlacementController : MonoBehaviour
             }
         }
 
-        // ── 2a) Belirli bir taşa tıklandıysa: o taşı direkt sürükle ──
+        Vector3 spawnPos = Vector3.zero;
+
         if (hitStone != null)
         {
-            // O taşı listeden çıkar ve yok et
-            if (!StoneReserveManager.Instance.TryConsumeSpecificStone(currentPlayer, hitStone))
+            if (!StoneReserveManager.Instance.TryConsumeSpecificStone(localPlayerID, hitStone))
                 return;
-
-            // Tıklanan taşın dünya pozisyonundan yeni "sürükleme taşı" oluştur
-            Vector3 spawnPos = new Vector3(hitStone.transform.position.x, 0.25f, hitStone.transform.position.z);
-            draggedStone = MagnetPiece.CreateMagnet(spawnPos, currentPlayer, preview: false);
-            draggedStone.isPlaced = false;
-
-            Collider col = draggedStone.GetComponent<Collider>();
-            if (col != null) col.enabled = false;
+            spawnPos = new Vector3(hitStone.transform.position.x, 0.25f, hitStone.transform.position.z);
         }
         else
         {
-            // ── 2b) Raycast taşa çarpmadı: Bölge kontrolü ile fallback ──
             Vector3 worldPos = GetWorldPoint(screenPos);
             if (worldPos == Vector3.positiveInfinity) return;
 
-            bool inPanel = (currentPlayer == 1 && worldPos.z < -PANEL_THRESHOLD) ||
-                           (currentPlayer == 2 && worldPos.z >  PANEL_THRESHOLD);
+            bool inPanel = false;
+            if (localPlayerID == 1 && worldPos.z < -PANEL_THRESHOLD) inPanel = true;
+            else if (localPlayerID == 2 && worldPos.z > PANEL_THRESHOLD) inPanel = true;
+            else if (localPlayerID == 3 && worldPos.x < -PANEL_THRESHOLD_X) inPanel = true;
+            else if (localPlayerID == 4 && worldPos.x > PANEL_THRESHOLD_X) inPanel = true;
+
             if (!inPanel) return;
 
-            StoneReserveManager.Instance.TryConsumeStone(currentPlayer);
-
-            Vector3 spawnPos = new Vector3(worldPos.x, 0.25f, worldPos.z);
-            draggedStone = MagnetPiece.CreateMagnet(spawnPos, currentPlayer, preview: false);
-            draggedStone.isPlaced = false;
-
-            Collider col = draggedStone.GetComponent<Collider>();
-            if (col != null) col.enabled = false;
+            StoneReserveManager.Instance.TryConsumeStone(localPlayerID);
+            spawnPos = new Vector3(worldPos.x, 0.25f, worldPos.z);
         }
 
-        // ── El İkonu ──
+        draggedStone = MagnetPiece.CreatePreviewMagnet(spawnPos, localPlayerID);
+
         if (handCursorTex != null)
         {
             handCursorObj = GameObject.CreatePrimitive(PrimitiveType.Quad);
@@ -181,15 +167,11 @@ public class PlacementController : MonoBehaviour
         }
 
         isDragging = true;
-        draggingPlayerID = currentPlayer;
+        draggingPlayerID = localPlayerID;
 
-        // SES: Taşı alma sesi
         AudioManager.Instance?.Play(AudioManager.SoundType.StonePick);
     }
 
-    // ──────────────────────────────────────────────
-    //  SÜRÜKLEME SIRASINDAKİ HAREKET
-    // ──────────────────────────────────────────────
     private void MoveDraggedStone(Vector2 screenPos)
     {
         if (draggedStone == null) { isDragging = false; return; }
@@ -197,20 +179,15 @@ public class PlacementController : MonoBehaviour
         Vector3 worldPos = GetWorldPoint(screenPos);
         if (worldPos == Vector3.positiveInfinity) return;
 
-        // Taşı imlecin altında tut
         draggedStone.transform.position = new Vector3(worldPos.x, 0.25f, worldPos.z);
 
-        // Renk sinyali: içerideyse aktif, dışarıdaysa soluk kırmızı
         bool inside = boardSetup.IsWithinBounds(worldPos);
-        MeshRenderer r = draggedStone.GetComponent<MeshRenderer>();
-        if (r != null)
+        if (draggedStone.meshRenderer != null)
         {
-            Color gl = inside ? GameManager.Instance.GetPlayerColor(GameManager.Instance.currentPlayer) * 1.5f
-                              : Color.red * 0.5f;
-            r.material.SetColor("_EmissionColor", gl);
+            Color gl = inside ? GameManager.Instance.GetPlayerColor(draggingPlayerID) * 1.5f : Color.red * 0.5f;
+            draggedStone.meshRenderer.material.SetColor("_EmissionColor", gl);
         }
 
-        // El ikonuna hafif pompalama (bouncing) efekti verelim
         if (handCursorObj != null)
         {
             float bounce = Mathf.Sin(Time.time * 6f) * 0.05f;
@@ -218,10 +195,7 @@ public class PlacementController : MonoBehaviour
         }
     }
 
-    // ──────────────────────────────────────────────
-    //  BIRAKMA
-    // ──────────────────────────────────────────────
-    private void TryDropStone(Vector2 screenPos)
+    private void TryDropStone(Vector2 screenPos, int localPlayerID)
     {
         if (draggedStone == null) { isDragging = false; return; }
 
@@ -230,43 +204,24 @@ public class PlacementController : MonoBehaviour
 
         if (worldPos != Vector3.positiveInfinity && boardSetup.IsWithinBounds(dropPos))
         {
-            // Geçerli bırakma: yerleştir
-            draggedStone.transform.position = dropPos;
-            draggedStone.isPlaced = true;
-            draggedStone.ownerPlayer = GameManager.Instance.currentPlayer;
+            // Başarılı. Görsel önizlemeyi sil, ServerRpc yolla!
+            Destroy(draggedStone.gameObject);
+            GameManager.Instance.TryPlaceStoneServerRpc(dropPos, localPlayerID);
 
-            // Rigidbody dondur
-            Rigidbody rb = draggedStone.GetComponent<Rigidbody>();
-            if (rb == null) rb = draggedStone.gameObject.AddComponent<Rigidbody>();
-            rb.isKinematic = true;
-            rb.constraints = RigidbodyConstraints.FreezeAll;
-
-            // NOT: Taş zaten sürükleme başında rezervden çıkarıldı, tekrar silme
-
-            // Oyun yöneticisine bildir
-            GameManager.Instance.OnMagnetPlaced(draggedStone);
-
-            // SES: Yerleştirme sesi
             AudioManager.Instance?.Play(AudioManager.SoundType.StonePlaced);
         }
         else
         {
-            // Daire dışına bıraktı - taşı iptal et, rezerve geri koy
-            int currentPlayer = GameManager.Instance.currentPlayer;
+            // Başarısız, iade et
             Destroy(draggedStone.gameObject);
-            StoneReserveManager.Instance?.ReturnStone(currentPlayer);
+            StoneReserveManager.Instance?.ReturnStone(localPlayerID);
         }
 
-        // Eli yokedelim
         if (handCursorObj != null) Destroy(handCursorObj);
-
         draggedStone = null;
         isDragging = false;
     }
 
-    // ──────────────────────────────────────────────
-    //  YARDIMCI: Ekran konumunu dünya düzlemine dönüştür
-    // ──────────────────────────────────────────────
     private Vector3 GetWorldPoint(Vector2 screenPos)
     {
         if (mainCamera == null) mainCamera = Camera.main;
@@ -280,20 +235,15 @@ public class PlacementController : MonoBehaviour
         return Vector3.positiveInfinity;
     }
 
-    private Vector3 GetBoardPosition(Vector2 screenPos) => GetWorldPoint(screenPos);
-
     private void CancelDrag()
     {
         if (handCursorObj != null) Destroy(handCursorObj);
-
         if (draggedStone != null)
         {
-            // İptal edildi - taşı rezerve geri koy
-            int currentPlayer = GameManager.Instance != null ? GameManager.Instance.currentPlayer : 0;
             Destroy(draggedStone.gameObject);
+            if (draggingPlayerID > 0)
+                StoneReserveManager.Instance?.ReturnStone(draggingPlayerID);
             draggedStone = null;
-            if (currentPlayer > 0)
-                StoneReserveManager.Instance?.ReturnStone(currentPlayer);
         }
         isDragging = false;
     }
@@ -301,6 +251,5 @@ public class PlacementController : MonoBehaviour
     public void ResetPreview()
     {
         CancelDrag();
-        canPlace = true;
     }
 }

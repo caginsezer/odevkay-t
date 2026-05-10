@@ -1,57 +1,46 @@
 using UnityEngine;
+using Unity.Netcode;
 using System.Collections;
 using System.Collections.Generic;
 
-/// <summary>
-/// Ana oyun yöneticisi - Sıra takibi, kazanma kontrolü, ceza sistemi
-/// </summary>
-public class GameManager : MonoBehaviour
+public class GameManager : NetworkBehaviour
 {
     public static GameManager Instance { get; private set; }
 
     [Header("Oyun Ayarları")]
-    public int magnetsPerPlayer = 18; // 12'den 18'e yükseltildi (Daha zorlayıcı)
-    public float attractionCheckDelay = 0.5f; // Çok beklemeye gerek yok
-    public float clusterDistance = 1.1f; // Taşların birleşmiş (ceza) sayılması için mesafe bir tık artırıldı (Eski: 0.8f)
+    public int magnetsPerPlayer = 18;
+    public float attractionCheckDelay = 0.5f;
+    public float clusterDistance = 1.1f;
     public float maxTurnTime = 10f;
-    private float currentTurnTime;
 
-    // Oyun Durumları
     public enum GameState { MainMenu, WaitingForPlacement, CheckingAttraction, GameOver }
-    public GameState currentState = GameState.MainMenu;
+    
+    public NetworkVariable<GameState> currentState = new NetworkVariable<GameState>(GameState.MainMenu);
+    public NetworkVariable<int> currentPlayer = new NetworkVariable<int>(1);
+    public NetworkVariable<int> totalPlayers = new NetworkVariable<int>(2);
+    public NetworkVariable<float> currentTurnTime = new NetworkVariable<float>(10f);
 
-    // Oyuncu bilgileri
-    public int currentPlayer = 1; // 1 veya 2
-    public int player1RemainingMagnets;
-    public int player2RemainingMagnets;
-    public int player1Score = 0;
-    public int player2Score = 0;
+    public NetworkList<int> playerRemainingMagnets;
+    public NetworkList<int> playerScores;
 
-    // Sahadaki mıknatıslar
     public List<MagnetPiece> placedMagnets = new List<MagnetPiece>();
     
-    // Geri Alma (Undo) Verileri
-    private MagnetPiece lastPlacedMagnet;
-    private int lastPlayerWhoMoved;
-    private int lastScoreChange;
-    private Coroutine currentCheckCoroutine;
-
-    // Events
     public System.Action<int> OnTurnChanged;
-    public System.Action<int, int> OnMagnetsUpdated; // player1Count, player2Count
-    public System.Action<int, int> OnScoresUpdated;  // player1Score, player2Score
+    public System.Action<int, int, int, int> OnMagnetsUpdated; 
+    public System.Action<int, int, int, int> OnScoresUpdated;  
     public System.Action<string> OnStatusMessage;
-    public System.Action<int> OnGameOver; // winner player number
-    public System.Action<float> OnTimerUpdated; // normalized time 0 to 1
+    public System.Action<int> OnGameOver; 
+    public System.Action<float> OnTimerUpdated; 
 
     private void Awake()
     {
         if (Instance == null)
         {
             Instance = this;
-            // KODDAN ZORLA AYARLA (Inspector ayarlarını ezmesi için)
             magnetsPerPlayer = 18; 
             maxTurnTime = 10f;
+            playerRemainingMagnets = new NetworkList<int>();
+            playerScores = new NetworkList<int>();
         }
         else
         {
@@ -59,189 +48,280 @@ public class GameManager : MonoBehaviour
         }
     }
 
-    private void Start()
+    public override void OnNetworkSpawn()
     {
-        // Artık oyun hemen başlamıyor. Main Menu çağrılmasını bekleyecek.
-        // StartNewGame() çağrısı StartGameFromMenu() fonksiyonuna taşındı.
+        if (IsServer)
+        {
+            playerRemainingMagnets.Clear();
+            playerScores.Clear();
+            for (int i = 0; i < 4; i++) {
+                playerRemainingMagnets.Add(0);
+                playerScores.Add(0);
+            }
+            
+            // Host: Client bağlandığında ona oyun durumunu gönder
+            NetworkManager.Singleton.OnClientConnectedCallback += OnClientConnected;
+        }
+        
+        // Client: Eğer oyun zaten başlamışsa (geç katılım), taşları ve board'u kur
+        if (!IsServer && currentState.Value != GameState.MainMenu)
+        {
+            Debug.Log($"[GameManager] Geç katılım algılandı! Oyun durumu: {currentState.Value}, Oyuncu sayısı: {totalPlayers.Value}");
+            SetupLocalGame(totalPlayers.Value);
+        }
+        
+        playerRemainingMagnets.OnListChanged += (e) => TriggerMagnetsUpdated();
+        playerScores.OnListChanged += (e) => TriggerScoresUpdated();
+        currentPlayer.OnValueChanged += (prev, current) => {
+            OnTurnChanged?.Invoke(current);
+            OnStatusMessage?.Invoke($"Oyuncu {current}'in sirasi.");
+        };
     }
-
-    public void StartGameFromMenu()
+    
+    private void OnClientConnected(ulong clientId)
     {
-        currentState = GameState.WaitingForPlacement;
-
-        // Önce eski taşları temizle, sonra yeniden oluştur
-        var reserveMgr = FindObjectOfType<StoneReserveManager>();
+        // Sunucu kendisi olduğunda atlat (host)
+        if (clientId == NetworkManager.Singleton.LocalClientId) return;
+        
+        // Oyun zaten başlamışsa, yeni client'a başlatma komutu gönder
+        if (currentState.Value != GameState.MainMenu)
+        {
+            Debug.Log($"[GameManager] Yeni client bağlandı (ID: {clientId}), ona oyun durumunu gönderiyorum.");
+            ClientRpcParams clientRpcParams = new ClientRpcParams
+            {
+                Send = new ClientRpcSendParams
+                {
+                    TargetClientIds = new ulong[] { clientId }
+                }
+            };
+            LateJoinSetupClientRpc(totalPlayers.Value, clientRpcParams);
+        }
+    }
+    
+    [ClientRpc]
+    private void LateJoinSetupClientRpc(int playerCount, ClientRpcParams clientRpcParams = default)
+    {
+        Debug.Log($"[GameManager] LateJoinSetup: Client tarafında {playerCount} oyunculu oyun kuruluyor!");
+        SetupLocalGame(playerCount);
+    }
+    
+    private void SetupLocalGame(int playerCount)
+    {
+        var reserveMgr = FindAnyObjectByType<StoneReserveManager>();
         if (reserveMgr != null)
         {
             reserveMgr.ClearAll();
-            reserveMgr.Initialize(magnetsPerPlayer);
+            reserveMgr.Initialize(magnetsPerPlayer, playerCount);
         }
 
-        // In-game UI'yı göster
-        FindObjectOfType<UIManager>()?.ShowGameUI();
+        if (BoardSetup.Instance != null)
+        {
+            BoardSetup.Instance.CreateBoard(playerCount);
+        }
 
-        // SES: Gameplay Fon Müziğini Başlat (Efekt Intro'da çalındı)
+        FindAnyObjectByType<UIManager>()?.ShowGameUI();
         AudioManager.Instance?.Play(AudioManager.SoundType.GameAmbiance);
+        
+        TriggerMagnetsUpdated();
+        TriggerScoresUpdated();
+        OnStatusMessage?.Invoke($"Oyuncu {currentPlayer.Value}'in sirasi.");
+    }
 
-        StartNewGame();
+    private void TriggerMagnetsUpdated()
+    {
+        int p1 = playerRemainingMagnets.Count > 0 ? playerRemainingMagnets[0] : 0;
+        int p2 = playerRemainingMagnets.Count > 1 ? playerRemainingMagnets[1] : 0;
+        int p3 = playerRemainingMagnets.Count > 2 ? playerRemainingMagnets[2] : 0;
+        int p4 = playerRemainingMagnets.Count > 3 ? playerRemainingMagnets[3] : 0;
+        OnMagnetsUpdated?.Invoke(p1, p2, p3, p4);
+    }
+
+    private void TriggerScoresUpdated()
+    {
+        int p1 = playerScores.Count > 0 ? playerScores[0] : 0;
+        int p2 = playerScores.Count > 1 ? playerScores[1] : 0;
+        int p3 = playerScores.Count > 2 ? playerScores[2] : 0;
+        int p4 = playerScores.Count > 3 ? playerScores[3] : 0;
+        OnScoresUpdated?.Invoke(p1, p2, p3, p4);
+    }
+
+    public void StartGameFromMenu(int playerCount)
+    {
+        if (!IsServer) return;
+        
+        totalPlayers.Value = playerCount;
+        currentState.Value = GameState.WaitingForPlacement;
+
+        StartNewGameClientRpc(playerCount);
+    }
+
+    [ClientRpc]
+    private void StartNewGameClientRpc(int playerCount)
+    {
+        var reserveMgr = FindAnyObjectByType<StoneReserveManager>();
+        if (reserveMgr != null)
+        {
+            reserveMgr.ClearAll();
+            reserveMgr.Initialize(magnetsPerPlayer, playerCount);
+        }
+
+        if (BoardSetup.Instance != null)
+        {
+            BoardSetup.Instance.CreateBoard(playerCount);
+        }
+
+        FindAnyObjectByType<UIManager>()?.ShowGameUI();
+        AudioManager.Instance?.Play(AudioManager.SoundType.GameAmbiance);
+        
+        // Sadece server silsin
+        if (IsServer)
+        {
+            foreach (var magnet in placedMagnets)
+            {
+                if (magnet != null && magnet.gameObject != null)
+                    magnet.GetComponent<NetworkObject>()?.Despawn();
+            }
+            placedMagnets.Clear();
+
+            for (int i = 0; i < 4; i++)
+            {
+                playerRemainingMagnets[i] = i < playerCount ? magnetsPerPlayer : 0;
+                playerScores[i] = 0;
+            }
+
+            currentPlayer.Value = 1;
+            currentTurnTime.Value = maxTurnTime;
+            currentState.Value = GameState.WaitingForPlacement;
+        }
+
+        TriggerMagnetsUpdated();
+        TriggerScoresUpdated();
+        OnStatusMessage?.Invoke("Oyun Başladı! Oyuncu 1'in sırası.");
     }
 
     private void Update()
     {
-        if (currentState == GameState.WaitingForPlacement)
-        {
-            currentTurnTime -= Time.deltaTime;
-            float normalizedTime = Mathf.Clamp01(currentTurnTime / maxTurnTime);
-            OnTimerUpdated?.Invoke(normalizedTime);
+        if (!IsServer) return;
 
-            if (currentTurnTime <= 0)
+        if (currentState.Value == GameState.WaitingForPlacement)
+        {
+            currentTurnTime.Value -= Time.deltaTime;
+            float normalizedTime = Mathf.Clamp01(currentTurnTime.Value / maxTurnTime);
+            UpdateTimerClientRpc(normalizedTime);
+
+            if (currentTurnTime.Value <= 0)
             {
-                currentTurnTime = 0;
-                OnTimerUpdated?.Invoke(0);
-                OnStatusMessage?.Invoke($"Süre doldu! Sıra değişiyor...");
+                currentTurnTime.Value = 0;
+                UpdateTimerClientRpc(0);
                 SwitchTurn();
             }
         }
     }
 
-    public void StartNewGame()
+    [ClientRpc]
+    private void UpdateTimerClientRpc(float normalizedTime)
     {
-        // Sahadaki tüm mıknatısları temizle
-        foreach (var magnet in placedMagnets)
-        {
-            if (magnet != null)
-                Destroy(magnet.gameObject);
-        }
-        placedMagnets.Clear();
-
-        // Değerleri sıfırla
-        player1RemainingMagnets = magnetsPerPlayer;
-        player2RemainingMagnets = magnetsPerPlayer;
-        player1Score = 0;
-        player2Score = 0;
-        currentPlayer = 1;
-        currentTurnTime = maxTurnTime;
-        currentState = GameManager.GameState.WaitingForPlacement;
-
-        OnTurnChanged?.Invoke(currentPlayer);
-        OnTimerUpdated?.Invoke(1.0f);
-        OnMagnetsUpdated?.Invoke(player1RemainingMagnets, player2RemainingMagnets);
-        OnScoresUpdated?.Invoke(player1Score, player2Score);
-        OnStatusMessage?.Invoke("Oyun Başladı! Oyuncu 1'in sırası.");
+        OnTimerUpdated?.Invoke(normalizedTime);
     }
 
-    /// <summary>
-    /// Mıknatıs yerleştirildiğinde çağrılır
-    /// </summary>
+    [ServerRpc(RequireOwnership = false)]
+    public void TryPlaceStoneServerRpc(Vector3 dropPos, int playerID)
+    {
+        if (currentState.Value != GameState.WaitingForPlacement) return;
+        if (currentPlayer.Value != playerID) return;
+
+        GameObject prefab = Resources.Load<GameObject>("MagnetPiecePrefab");
+        if (prefab != null)
+        {
+            GameObject obj = Instantiate(prefab, dropPos, Quaternion.identity);
+            MagnetPiece magnet = obj.GetComponent<MagnetPiece>();
+            
+            // SPAWN FIRST!
+            obj.GetComponent<NetworkObject>().Spawn();
+            
+            // THEN ASSIGN NETWORK VARIABLES!
+            magnet.ownerPlayer.Value = playerID;
+
+            OnMagnetPlaced(magnet);
+        }
+    }
+
     public void OnMagnetPlaced(MagnetPiece magnet)
     {
-        if (currentState != GameState.WaitingForPlacement) return;
+        if (!IsServer) return;
+        if (currentState.Value != GameState.WaitingForPlacement) return;
 
-        magnet.ownerPlayer = currentPlayer;
-        magnet.isPlaced = true;
+        magnet.ownerPlayer.Value = currentPlayer.Value;
+        magnet.isPlaced.Value = true;
         placedMagnets.Add(magnet);
 
-        // Kalan mıknatısları azalt
-        if (currentPlayer == 1)
-            player1RemainingMagnets--;
-        else
-            player2RemainingMagnets--;
+        int pIndex = currentPlayer.Value - 1;
+        if (pIndex >= 0 && pIndex < playerRemainingMagnets.Count)
+        {
+            playerRemainingMagnets[pIndex]--;
+        }
 
-        OnMagnetsUpdated?.Invoke(player1RemainingMagnets, player2RemainingMagnets);
-
-        // Geri alma (Undo) için kaydet
-        lastPlacedMagnet = magnet;
-        lastPlayerWhoMoved = currentPlayer;
-        lastScoreChange = 0; // Şimdilik 0, CheckAttractions sonunda güncellenecek
-
-        // Çekim kontrolü başlat
-        currentState = GameState.CheckingAttraction;
-        currentCheckCoroutine = StartCoroutine(CheckAttractionsAfterDelay());
+        currentState.Value = GameState.CheckingAttraction;
+        StartCoroutine(CheckAttractionsAfterDelay());
     }
 
     private IEnumerator CheckAttractionsAfterDelay()
     {
-        OnStatusMessage?.Invoke("Miknatislar kontrol ediliyor...");
-
-        // Mıknatısların fiziksel olarak hareket etmesi için bekle
         yield return new WaitForSeconds(attractionCheckDelay);
 
-        // Kümelenen (çarpışan) mıknatısları bul
         List<MagnetPiece> clusteredMagnets = FindClusteredMagnets();
+        int pIndex = currentPlayer.Value - 1;
 
         if (clusteredMagnets.Count > 0)
         {
-            // CEZA: Kümelenen mıknatıslar mevcut oyuncuya geri verilir
             int penaltyCount = clusteredMagnets.Count;
-
-            // Skor Cezası (Taş başına -50 puan)
             int penaltyScore = penaltyCount * 50;
-            if (currentPlayer == 1) player1Score = Mathf.Max(0, player1Score - penaltyScore);
-            else player2Score = Mathf.Max(0, player2Score - penaltyScore);
+            
+            playerScores[pIndex] = Mathf.Max(0, playerScores[pIndex] - penaltyScore);
 
-            OnStatusMessage?.Invoke($"Taslar birlesdi! Oyuncu {currentPlayer} ceza: {penaltyCount} miknatıs aldi! (-{penaltyScore} Skor)");
+            PlaySoundClientRpc(AudioManager.SoundType.Penalty);
 
-            // SES: Ceza/Çarpışma sesi
-            AudioManager.Instance?.Play(AudioManager.SoundType.Penalty);
-
-            // Mıknatısları sahadan kaldır ve oyuncuya görsel olarak geri ver
             foreach (var magnet in clusteredMagnets)
             {
                 placedMagnets.Remove(magnet);
-                Destroy(magnet.gameObject);
-                
-                // Taş görsel olarak yan panele (rezerv) döner
-                StoneReserveManager.Instance?.ReturnStone(currentPlayer);
+                magnet.GetComponent<NetworkObject>()?.Despawn();
+                ReturnStoneClientRpc(currentPlayer.Value);
             }
 
-            if (currentPlayer == 1)
-                player1RemainingMagnets += penaltyCount;
-            else
-                player2RemainingMagnets += penaltyCount;
-
-            OnMagnetsUpdated?.Invoke(player1RemainingMagnets, player2RemainingMagnets);
-            OnScoresUpdated?.Invoke(player1Score, player2Score);
+            playerRemainingMagnets[pIndex] += penaltyCount;
         }
         else
         {
-            // BAŞARILI YERLEŞTİRME ÖDÜLÜ
-            // Zaman bonusu + temel puan
             int baseScore = 100;
-            int timeBonus = Mathf.FloorToInt((currentTurnTime / maxTurnTime) * 50);
-            earnedScoreAtThisTurn = baseScore + timeBonus;
-            int earnedScore = earnedScoreAtThisTurn;
+            int timeBonus = Mathf.FloorToInt((currentTurnTime.Value / maxTurnTime) * 50);
+            int earnedScore = baseScore + timeBonus;
 
-            if (currentPlayer == 1) player1Score += earnedScore;
-            else player2Score += earnedScore;
-
-            OnScoresUpdated?.Invoke(player1Score, player2Score);
-            OnStatusMessage?.Invoke($"Miknatıs basariyla yerlestirildi! (+{earnedScore} Puan)");
+            playerScores[pIndex] += earnedScore;
         }
 
-        // Skor değişimini Geri Al (Undo) için sakla (CheckAttractions sonunda)
-        lastScoreChange = earnedScoreAtThisTurn;
-
-        // Kazanma kontrolü
         if (CheckWinCondition())
         {
-            // Kazanan ekstra 1000 puan alır
-            if (player1RemainingMagnets <= 0) player1Score += 1000;
-            if (player2RemainingMagnets <= 0) player2Score += 1000;
-            OnScoresUpdated?.Invoke(player1Score, player2Score);
             yield break;
         }
 
-        currentCheckCoroutine = null;
-        // Sırayı değiştir
         SwitchTurn();
     }
 
-    private int earnedScoreAtThisTurn = 0;
+    [ClientRpc]
+    private void ReturnStoneClientRpc(int player)
+    {
+        StoneReserveManager.Instance?.ReturnStone(player);
+    }
+
+    [ClientRpc]
+    private void PlaySoundClientRpc(AudioManager.SoundType sound)
+    {
+        AudioManager.Instance?.Play(sound);
+    }
 
     private List<MagnetPiece> FindClusteredMagnets()
     {
         HashSet<MagnetPiece> clustered = new HashSet<MagnetPiece>();
-
         for (int i = 0; i < placedMagnets.Count; i++)
         {
             for (int j = i + 1; j < placedMagnets.Count; j++)
@@ -253,7 +333,6 @@ public class GameManager : MonoBehaviour
                     placedMagnets[j].transform.position
                 );
 
-                // Eğer iki mıknatıs çok yakınsa (yapışmışsa)
                 if (distance < clusterDistance)
                 {
                     clustered.Add(placedMagnets[i]);
@@ -261,106 +340,58 @@ public class GameManager : MonoBehaviour
                 }
             }
         }
-
         return new List<MagnetPiece>(clustered);
     }
 
     private bool CheckWinCondition()
     {
-        if (player1RemainingMagnets <= 0)
+        for (int i = 0; i < totalPlayers.Value; i++)
         {
-            currentState = GameState.GameOver;
-            OnStatusMessage?.Invoke("Oyuncu 1 Kazandi!");
-            OnGameOver?.Invoke(1);
-            
-            // SES: Kazanma sesi
-            AudioManager.Instance?.Play(AudioManager.SoundType.Win);
-            
-            return true;
-        }
-        else if (player2RemainingMagnets <= 0)
-        {
-            currentState = GameState.GameOver;
-            OnStatusMessage?.Invoke("Oyuncu 2 Kazandi!");
-            OnGameOver?.Invoke(2);
-
-            // SES: Kazanma sesi
-            AudioManager.Instance?.Play(AudioManager.SoundType.Win);
-
-            return true;
+            if (playerRemainingMagnets[i] <= 0)
+            {
+                currentState.Value = GameState.GameOver;
+                playerScores[i] += 1000;
+                TriggerScoresUpdated();
+                GameOverClientRpc(i + 1);
+                return true;
+            }
         }
         return false;
     }
 
+    [ClientRpc]
+    private void GameOverClientRpc(int winnerPlayer)
+    {
+        OnStatusMessage?.Invoke($"Oyuncu {winnerPlayer} Kazandi!");
+        OnGameOver?.Invoke(winnerPlayer);
+        AudioManager.Instance?.Play(AudioManager.SoundType.Win);
+    }
+
     private void SwitchTurn()
     {
-        currentPlayer = (currentPlayer == 1) ? 2 : 1;
-        currentState = GameState.WaitingForPlacement;
-        currentTurnTime = maxTurnTime;
-
-        // SES: Sıra değişim sesi
-        AudioManager.Instance?.Play(AudioManager.SoundType.TurnChange);
-
-        OnTurnChanged?.Invoke(currentPlayer);
-        OnTimerUpdated?.Invoke(1.0f);
-        OnStatusMessage?.Invoke($"Oyuncu {currentPlayer}'in sirasi.");
-    }
-
-    /// <summary>
-    /// En son yapılan hamleyi geri alır.
-    /// </summary>
-    public void UndoLastMove()
-    {
-        Debug.Log($"[GameManager] UndoLastMove calistiriliyor. lastPlacedMagnet: {(lastPlacedMagnet != null ? lastPlacedMagnet.name : "null")}");
+        if (!IsServer) return;
         
-        if (currentState == GameState.GameOver || lastPlacedMagnet == null) return;
+        int nextPlayer = currentPlayer.Value + 1;
+        if (nextPlayer > totalPlayers.Value) nextPlayer = 1;
+        
+        currentPlayer.Value = nextPlayer;
+        currentState.Value = GameState.WaitingForPlacement;
+        currentTurnTime.Value = maxTurnTime;
 
-        // 1. Devam eden çekim kontrolünü durdur
-        if (currentCheckCoroutine != null)
-        {
-            StopCoroutine(currentCheckCoroutine);
-            currentCheckCoroutine = null;
-        }
-
-        // 2. Taşı sahadan kaldır
-        placedMagnets.Remove(lastPlacedMagnet);
-        Destroy(lastPlacedMagnet.gameObject);
-
-        // 3. Rezerv sayısını ve skorunu geri yükle
-        if (lastPlayerWhoMoved == 1)
-        {
-            player1RemainingMagnets++;
-            player1Score = Mathf.Max(0, player1Score - lastScoreChange);
-        }
-        else
-        {
-            player2RemainingMagnets++;
-            player2Score = Mathf.Max(0, player2Score - lastScoreChange);
-        }
-
-        // 4. Taşı görsel olarak rezervine geri ver
-        StoneReserveManager.Instance?.ReturnStone(lastPlayerWhoMoved);
-
-        // 5. Sırayı hamleyi yapan oyuncuya geri çevir
-        currentPlayer = lastPlayerWhoMoved;
-        currentState = GameState.WaitingForPlacement;
-        currentTurnTime = maxTurnTime;
-
-        // 6. UI ve Ses
-        AudioManager.Instance?.Play(AudioManager.SoundType.ButtonClick);
-        OnMagnetsUpdated?.Invoke(player1RemainingMagnets, player2RemainingMagnets);
-        OnScoresUpdated?.Invoke(player1Score, player2Score);
-        OnTurnChanged?.Invoke(currentPlayer);
-        OnStatusMessage?.Invoke($"Hamle geri alindi! Oyuncu {currentPlayer} tekrar oynuyor.");
-
-        lastPlacedMagnet = null; // Sadece bir kez geri alınabilir
+        PlaySoundClientRpc(AudioManager.SoundType.TurnChange);
     }
+
+    public void UndoLastMove() { } // Devre Dışı
 
     public Color GetPlayerColor(int player)
     {
-        if (player == 1)
-            return new Color(0.2f, 0.6f, 1f, 1f); // Mavi
-        else
-            return new Color(1f, 0.5f, 0f, 1f); // Turuncu
+        switch(player)
+        {
+            case 1: return new Color(0.1f, 0.85f, 1f, 1f); // Mavi (Alt)
+            case 2: return new Color(1f, 0.1f, 0.1f, 1f); // Kırmızı (Üst)
+            case 3: return new Color(0.2f, 1f, 0.2f, 1f); // Yeşil (Sol)
+            case 4: return new Color(1f, 0.8f, 0.1f, 1f); // Sarı (Sağ)
+            default: return Color.white;
+        }
     }
 }

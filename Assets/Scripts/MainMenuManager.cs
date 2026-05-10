@@ -3,23 +3,26 @@ using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
 using UnityEngine.EventSystems;
+using Unity.Netcode;
+using Unity.Netcode.Transports.UTP;
 
 public class MainMenuManager : MonoBehaviour
 {
     private GameObject menuCanvasObj;
     private Canvas menuCanvas;
     
-    // Animating Title Letters
     private List<RectTransform> animLetters = new List<RectTransform>();
     private List<Vector2> originalPositions = new List<Vector2>();
     private float timeElapsed = 0f;
 
     private GameObject rulesPopup;
+    private GameObject lobbyPopup;
+    private InputField ipInput;
 
     public void Initialize()
     {
         BuildMenuCanvas();
-        ShowMenu(); // Menü seslerini ve görünürlüğünü başlat
+        ShowMenu(); 
     }
 
     public void ShowMenu()
@@ -29,7 +32,6 @@ public class MainMenuManager : MonoBehaviour
         else
             BuildMenuCanvas();
 
-        // Menü ambiyans sesini başlat
         AudioManager.Instance?.Play(AudioManager.SoundType.MenuAmbiance);
     }
 
@@ -38,63 +40,67 @@ public class MainMenuManager : MonoBehaviour
         menuCanvasObj = new GameObject("MainMenuCanvas");
         menuCanvas = menuCanvasObj.AddComponent<Canvas>();
         menuCanvas.renderMode = RenderMode.ScreenSpaceOverlay;
-        menuCanvas.sortingOrder = 50; // In-game UI üstünde kalsın
+        menuCanvas.sortingOrder = 50;
 
         CanvasScaler scaler = menuCanvasObj.AddComponent<CanvasScaler>();
         scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
-        scaler.referenceResolution = new Vector2(1080, 1920); // Portrait
+        scaler.referenceResolution = new Vector2(1080, 1920); 
         scaler.matchWidthOrHeight = 0.5f;
         menuCanvasObj.AddComponent<GraphicRaycaster>();
 
-        // EventSystem garantisi
-        if (FindObjectOfType<EventSystem>() == null)
+        if (FindAnyObjectByType<EventSystem>() == null)
         {
             GameObject esObj = new GameObject("EventSystem");
             esObj.AddComponent<EventSystem>();
             esObj.AddComponent<StandaloneInputModule>();
         }
 
-        // 2. Koyu Arkaplan (Overlay)
+        // Modern Arka Plan
         GameObject bgObj = new GameObject("MenuOverlay");
         bgObj.transform.SetParent(menuCanvasObj.transform, false);
         Image bgImg = bgObj.AddComponent<Image>();
-        bgImg.color = new Color(0.05f, 0.05f, 0.08f, 0.88f); // Koyu siyahımsı şeffaf
+        bgImg.color = new Color(0.02f, 0.02f, 0.05f, 0.95f); // Koyu Lacivert/Siyah
         RectTransform bgRect = bgObj.GetComponent<RectTransform>();
-        bgRect.anchorMin = Vector2.zero;
-        bgRect.anchorMax = Vector2.one;
-        bgRect.offsetMin = Vector2.zero;
-        bgRect.offsetMax = Vector2.zero;
+        bgRect.anchorMin = Vector2.zero; bgRect.anchorMax = Vector2.one;
+        bgRect.offsetMin = Vector2.zero; bgRect.offsetMax = Vector2.zero;
 
-        // 3. Animasyonlu Ana Başlık (MAGNETIC)
-        CreateAnimatedTitle("MAGNETIC", new Vector2(0, 400));
+        CreateAnimatedTitle("MAGNETIC", new Vector2(0, 450));
         
-        // Klasik Alt Başlık (MAYHEM)
-        GameObject subTitleObj = CreateTextObj("MAYHEM", 48, FontStyle.Bold, new Color(1f, 0.4f, 0.1f));
-        SetAnchorsAndOffset(subTitleObj, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0, 300));
-        // Alt çizgi dekor
+        GameObject subTitleObj = CreateTextObj("MAYHEM", 55, FontStyle.Bold, new Color(1f, 0.8f, 0.1f));
+        SetAnchorsAndOffset(subTitleObj, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0, 320));
+        
         GameObject lineInfo = new GameObject("SubLine");
         lineInfo.transform.SetParent(menuCanvasObj.transform, false);
         Image lineImg = lineInfo.AddComponent<Image>();
-        lineImg.color = new Color(1f, 0.5f, 0f, 0.8f);
-        SetAnchorsAndOffset(lineInfo, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0, 270), new Vector2(250, 4));
+        lineImg.color = new Color(0.2f, 0.8f, 1f, 0.8f); // Neon Mavi Çizgi
+        SetAnchorsAndOffset(lineInfo, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0, 280), new Vector2(400, 4));
 
-        // 4. Play Butonu ("OYUNA BAŞLA")
-        GameObject playBtnObj = CreateButton("PlayButton", "▶ OYUNA BAŞLA", 50, new Color(1f, 0.7f, 0.1f), new Color(0.1f, 0.1f, 0.1f));
+        GameObject playBtnObj = CreateButton("PlayButton", "OYUNA BAŞLA", 45, new Color(0.1f, 0.6f, 1f, 0.8f), Color.white);
         SetAnchorsAndOffset(playBtnObj, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0, -100), new Vector2(600, 120));
+        AddButtonHoverEffect(playBtnObj);
         playBtnObj.GetComponent<Button>().onClick.AddListener(OnPlayClicked);
 
-        // 5. Rules Butonu ("KURALLAR")
-        GameObject rulesBtnObj = CreateButton("RulesButton", "KURALLAR", 35, new Color(0.2f, 0.8f, 0.8f), new Color(0.1f, 0.1f, 0.1f));
-        SetAnchorsAndOffset(rulesBtnObj, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0, -260), new Vector2(400, 80));
+        GameObject rulesBtnObj = CreateButton("RulesButton", "KURALLAR", 35, new Color(0.1f, 0.1f, 0.2f, 0.8f), new Color(0.8f, 0.8f, 0.8f));
+        SetAnchorsAndOffset(rulesBtnObj, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0, -280), new Vector2(400, 90));
+        AddButtonHoverEffect(rulesBtnObj);
         rulesBtnObj.GetComponent<Button>().onClick.AddListener(OnRulesClicked);
 
         CreateRulesPopup();
+        CreateLobbyPopup();
+    }
+
+    private void AddButtonHoverEffect(GameObject btnObj)
+    {
+        Outline outline = btnObj.AddComponent<Outline>();
+        outline.effectColor = new Color(0.2f, 0.8f, 1f, 0.5f);
+        outline.effectDistance = new Vector2(4, -4);
+        
+        // Basit bir scale animasyonu için EventTrigger eklenebilir, şimdilik statik premium glow ekledik
     }
 
     private void CreateAnimatedTitle(string word, Vector2 centerOffset)
     {
-        // Harfleri ayrı ayrı yarat
-        float letterSpacing = 85f;
+        float letterSpacing = 95f;
         float totalWidth = (word.Length - 1) * letterSpacing;
         float startX = -totalWidth / 2f;
 
@@ -106,29 +112,27 @@ public class MainMenuManager : MonoBehaviour
             float posX = startX + i * letterSpacing;
             string letter = word[i].ToString();
 
-            GameObject letterObj = CreateTextObj(letter, 110, FontStyle.Bold, Color.white);
+            GameObject letterObj = CreateTextObj(letter, 120, FontStyle.Bold, Color.white);
             RectTransform rect = letterObj.GetComponent<RectTransform>();
             rect.anchorMin = new Vector2(0.5f, 0.5f);
             rect.anchorMax = new Vector2(0.5f, 0.5f);
             rect.pivot = new Vector2(0.5f, 0.5f);
             
-            // Konumlandır
             Vector2 finalPos = new Vector2(posX, centerOffset.y);
             rect.anchoredPosition = finalPos;
             rect.sizeDelta = new Vector2(100, 150);
 
-            // Rastgele Renk Efekti (Gradientimsi - Beyaz ve sarımtrak/turuncu geçiş)
-            float t = (float)i / (word.Length - 1); // 0 to 1
-            Color col = Color.Lerp(Color.white, new Color(1f, 0.8f, 0f), t);
-            // Son harfleri daha turuncu yap
-            if (i > word.Length - 3) col = new Color(1f, 0.5f, 0.1f);
+            float t = (float)i / (word.Length - 1);
+            Color col = Color.Lerp(new Color(0.2f, 0.8f, 1f), new Color(0.8f, 0.2f, 1f), t); // Mavi-Mor Gradient
             
             letterObj.GetComponent<Text>().color = col;
-
-            // Gölge ekle
             Shadow shadow = letterObj.AddComponent<Shadow>();
             shadow.effectColor = new Color(0, 0, 0, 0.8f);
-            shadow.effectDistance = new Vector2(6, -6);
+            shadow.effectDistance = new Vector2(4, -4);
+
+            Outline ol = letterObj.AddComponent<Outline>();
+            ol.effectColor = col * 0.5f;
+            ol.effectDistance = new Vector2(2, -2);
 
             animLetters.Add(rect);
             originalPositions.Add(finalPos);
@@ -139,14 +143,11 @@ public class MainMenuManager : MonoBehaviour
     {
         if (animLetters.Count == 0 || menuCanvasObj == null || !menuCanvasObj.activeSelf) return;
 
-        timeElapsed += Time.deltaTime * 3f; // Animasyon hızı
+        timeElapsed += Time.deltaTime * 2.5f;
 
         for (int i = 0; i < animLetters.Count; i++)
         {
-            // Dalga (Sine wave) hareketi - offseti var
-            float wave = Mathf.Sin(timeElapsed + (i * 0.7f)) * 25f; // Zıplama yüksekliği
-            
-            // X ekseninde de hafif bir sallanma eklenebilir ama sade dikey zıplama şıktır
+            float wave = Mathf.Sin(timeElapsed + (i * 0.5f)) * 20f;
             animLetters[i].anchoredPosition = originalPositions[i] + new Vector2(0, wave);
         }
     }
@@ -155,15 +156,6 @@ public class MainMenuManager : MonoBehaviour
     {
         Font font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
         if (font == null) font = Resources.GetBuiltinResource<Font>("Arial.ttf");
-        
-        if (font == null) 
-        {
-            try {
-                font = Font.CreateDynamicFontFromOSFont("Arial", 14);
-            } catch {
-                // Ignore
-            }
-        }
         return font;
     }
 
@@ -178,6 +170,7 @@ public class MainMenuManager : MonoBehaviour
         txt.fontStyle = style;
         txt.color = color;
         txt.alignment = TextAnchor.MiddleCenter;
+        txt.raycastTarget = false; // Metinler tıklamayı engellemesin
         return txtObj;
     }
 
@@ -188,8 +181,18 @@ public class MainMenuManager : MonoBehaviour
         rect.anchorMax = anchorMax;
         rect.pivot = new Vector2(0.5f, 0.5f);
         rect.anchoredPosition = pos;
-        if (size != default) rect.sizeDelta = size;
-        else rect.sizeDelta = new Vector2(800, 200); // Default genişlik
+        if (size != default)
+        {
+            rect.sizeDelta = size;
+        }
+        else
+        {
+            // Eğer stretch (0 to 1) ise sizeDelta (0,0) olmalı, aksi takdirde taşma yapar
+            if (anchorMin == Vector2.zero && anchorMax == Vector2.one)
+                rect.sizeDelta = Vector2.zero;
+            else
+                rect.sizeDelta = new Vector2(800, 200);
+        }
     }
 
     private GameObject CreateButton(string objName, string textContent, int fontSize, Color bgColor, Color textColor)
@@ -197,92 +200,304 @@ public class MainMenuManager : MonoBehaviour
         GameObject btnObj = new GameObject(objName);
         btnObj.transform.SetParent(menuCanvasObj.transform, false);
         
-        // Background
         Image img = btnObj.AddComponent<Image>();
         img.color = bgColor;
-        
-        // Button Logic
         Button btn = btnObj.AddComponent<Button>();
         
-        // Text child
         GameObject txtObj = CreateTextObj(textContent, fontSize, FontStyle.Bold, textColor);
         txtObj.transform.SetParent(btnObj.transform, false);
-        SetAnchorsAndOffset(txtObj, Vector2.zero, Vector2.one, Vector2.zero); // Fill
+        SetAnchorsAndOffset(txtObj, Vector2.zero, Vector2.one, Vector2.zero); 
 
         return btnObj;
+    }
+
+    private void ApplyGlassmorphism(GameObject panel)
+    {
+        Image img = panel.GetComponent<Image>();
+        if (img == null) img = panel.AddComponent<Image>();
+        img.color = new Color(0.05f, 0.05f, 0.08f, 0.85f); // Koyu saydam
+
+        Outline ol = panel.AddComponent<Outline>();
+        ol.effectColor = new Color(0.3f, 0.5f, 1f, 0.4f);
+        ol.effectDistance = new Vector2(3, -3);
     }
 
     private void CreateRulesPopup()
     {
         rulesPopup = new GameObject("RulesPopup");
         rulesPopup.transform.SetParent(menuCanvasObj.transform, false);
-        Image bgImg = rulesPopup.AddComponent<Image>();
-        bgImg.color = new Color(0.1f, 0.1f, 0.15f, 0.98f); // Koyu panel
-        SetAnchorsAndOffset(rulesPopup, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(800, 1000));
-        
-        // Çerçeve/Outline
-        Outline outline = rulesPopup.AddComponent<Outline>();
-        outline.effectColor = new Color(0.2f, 0.8f, 0.8f);
-        outline.effectDistance = new Vector2(3, -3);
+        ApplyGlassmorphism(rulesPopup);
+        SetAnchorsAndOffset(rulesPopup, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(850, 1100));
 
-        // Title
-        GameObject title = CreateTextObj("KURALLAR", 55, FontStyle.Bold, Color.white);
+        GameObject title = CreateTextObj("KURALLAR", 55, FontStyle.Bold, new Color(0.2f, 0.8f, 1f));
         title.transform.SetParent(rulesPopup.transform, false);
-        SetAnchorsAndOffset(title, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0, -80), new Vector2(600, 100));
+        SetAnchorsAndOffset(title, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0, -100), new Vector2(600, 100));
 
-        // Kurallar Metni
         string rulesBody = 
         "1. Her oyuncunun kendine ait taşları vardır.\n\n" +
         "2. Sırası gelen oyuncu, kendi rezervinden bir taşı ortadaki masaya bırakır.\n\n" +
-        "3. Süre sınırı vardır, süre dolarsa taş havaya uçar ve sıranı kaybedersin.\n\n" +
-        "4. Mıknatısları birbirine değdirmeden, stratejik yerleştir! Eğer taşları yapıştırırsan, hepsi geri döner ve eksi yersin.\n\n" +
+        "3. Süre sınırı vardır, süre dolarsa sıranı kaybedersin.\n\n" +
+        "4. Mıknatısları birbirine değdirmeden yerleştir! Eğer taşları yapıştırırsan, hepsi geri döner ve eksi puan yersin.\n\n" +
         "5. Elindeki taşları ilk bitiren kazanır!";
 
-        GameObject body = CreateTextObj(rulesBody, 36, FontStyle.Normal, new Color(0.9f, 0.9f, 0.9f));
+        GameObject body = CreateTextObj(rulesBody, 36, FontStyle.Normal, new Color(0.9f, 0.9f, 0.95f));
         body.transform.SetParent(rulesPopup.transform, false);
         Text bodyTxt = body.GetComponent<Text>();
         bodyTxt.alignment = TextAnchor.UpperLeft;
-        SetAnchorsAndOffset(body, new Vector2(0f, 0f), new Vector2(1f, 1f), new Vector2(0, -60), new Vector2(0, 0)); // Top offseti title'dan düşerek
-        // Anchor fill custom offsets:
+        SetAnchorsAndOffset(body, new Vector2(0f, 0f), new Vector2(1f, 1f), new Vector2(0, -60), new Vector2(0, 0)); 
         RectTransform rect = body.GetComponent<RectTransform>();
-        rect.offsetMin = new Vector2(40, 120); // bottom ve left padding
-        rect.offsetMax = new Vector2(-40, -180); // top ve right padding
+        rect.offsetMin = new Vector2(60, 150); 
+        rect.offsetMax = new Vector2(-60, -200); 
 
-        // Kapat Butonu
-        GameObject closeBtn = CreateButton("CloseRules", "KAPAT", 40, new Color(0.8f, 0.2f, 0.2f), Color.white);
+        GameObject closeBtn = CreateButton("CloseRules", "KAPAT", 40, new Color(0.8f, 0.2f, 0.3f, 0.9f), Color.white);
         closeBtn.transform.SetParent(rulesPopup.transform, false);
-        SetAnchorsAndOffset(closeBtn, new Vector2(0.5f, 0f), new Vector2(0.5f, 0f), new Vector2(0, 60), new Vector2(300, 80));
+        SetAnchorsAndOffset(closeBtn, new Vector2(0.5f, 0f), new Vector2(0.5f, 0f), new Vector2(0, 80), new Vector2(350, 90));
+        AddButtonHoverEffect(closeBtn);
         closeBtn.GetComponent<Button>().onClick.AddListener(() => { rulesPopup.SetActive(false); });
 
-        rulesPopup.SetActive(false); // Başlangıçta gizli
+        rulesPopup.SetActive(false); 
+    }
+
+    private void CreateLobbyPopup()
+    {
+        lobbyPopup = new GameObject("LobbyPopup");
+        lobbyPopup.transform.SetParent(menuCanvasObj.transform, false);
+        ApplyGlassmorphism(lobbyPopup);
+        SetAnchorsAndOffset(lobbyPopup, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(850, 1100));
+
+        GameObject title = CreateTextObj("LOBİ BAĞLANTISI", 55, FontStyle.Bold, new Color(1f, 0.8f, 0.1f));
+        title.transform.SetParent(lobbyPopup.transform, false);
+        SetAnchorsAndOffset(title, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0, -100), new Vector2(600, 100));
+
+        // Host Alanı
+        GameObject hostTitle = CreateTextObj("OYUN KUR (HOST)", 40, FontStyle.Bold, new Color(0.7f, 0.7f, 0.7f));
+        hostTitle.transform.SetParent(lobbyPopup.transform, false);
+        SetAnchorsAndOffset(hostTitle, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0, -220), new Vector2(600, 80));
+
+        GameObject h2 = CreateButton("H2", "2 Oyuncu", 35, new Color(0.2f, 0.6f, 1f, 0.8f), Color.white);
+        h2.transform.SetParent(lobbyPopup.transform, false);
+        SetAnchorsAndOffset(h2, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0, -320), new Vector2(400, 80));
+        AddButtonHoverEffect(h2);
+        h2.GetComponent<Button>().onClick.AddListener(() => StartHostGame(2));
+
+        GameObject h3 = CreateButton("H3", "3 Oyuncu", 35, new Color(0.2f, 0.8f, 0.2f, 0.8f), Color.white);
+        h3.transform.SetParent(lobbyPopup.transform, false);
+        SetAnchorsAndOffset(h3, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0, -420), new Vector2(400, 80));
+        AddButtonHoverEffect(h3);
+        h3.GetComponent<Button>().onClick.AddListener(() => StartHostGame(3));
+
+        GameObject h4 = CreateButton("H4", "4 Oyuncu", 35, new Color(1f, 0.6f, 0.1f, 0.8f), Color.white);
+        h4.transform.SetParent(lobbyPopup.transform, false);
+        SetAnchorsAndOffset(h4, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0, -520), new Vector2(400, 80));
+        AddButtonHoverEffect(h4);
+        h4.GetComponent<Button>().onClick.AddListener(() => StartHostGame(4));
+
+        // Join Alanı
+        GameObject joinTitle = CreateTextObj("ODAYA KATIL (CLIENT)", 40, FontStyle.Bold, new Color(0.7f, 0.7f, 0.7f));
+        joinTitle.transform.SetParent(lobbyPopup.transform, false);
+        SetAnchorsAndOffset(joinTitle, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0, -680), new Vector2(600, 80));
+
+        GameObject inputObj = new GameObject("IPInput");
+        inputObj.transform.SetParent(lobbyPopup.transform, false);
+        Image inputBg = inputObj.AddComponent<Image>();
+        inputBg.color = new Color(0.9f, 0.9f, 0.9f, 0.9f);
+        SetAnchorsAndOffset(inputObj, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0, -780), new Vector2(500, 80));
+        
+        GameObject textObj = CreateTextObj("127.0.0.1", 35, FontStyle.Normal, Color.black);
+        textObj.transform.SetParent(inputObj.transform, false);
+        SetAnchorsAndOffset(textObj, Vector2.zero, Vector2.one, Vector2.zero);
+        
+        ipInput = inputObj.AddComponent<InputField>();
+        ipInput.textComponent = textObj.GetComponent<Text>();
+        ipInput.text = "127.0.0.1";
+
+        GameObject jBtn = CreateButton("Join", "BAĞLAN", 40, new Color(0.8f, 0.2f, 0.8f, 0.8f), Color.white);
+        jBtn.transform.SetParent(lobbyPopup.transform, false);
+        SetAnchorsAndOffset(jBtn, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0, -880), new Vector2(400, 80));
+        AddButtonHoverEffect(jBtn);
+        jBtn.GetComponent<Button>().onClick.AddListener(JoinGame);
+
+        GameObject closeBtn = CreateButton("CloseLobby", "İPTAL", 35, new Color(0.8f, 0.2f, 0.3f, 0.8f), Color.white);
+        closeBtn.transform.SetParent(lobbyPopup.transform, false);
+        SetAnchorsAndOffset(closeBtn, new Vector2(0.5f, 0f), new Vector2(0.5f, 0f), new Vector2(0, 80), new Vector2(350, 80));
+        AddButtonHoverEffect(closeBtn);
+        closeBtn.GetComponent<Button>().onClick.AddListener(() => { StartCoroutine(SlidePopup(lobbyPopup, false)); });
+
+        lobbyPopup.SetActive(false);
     }
 
     private void OnPlayClicked()
     {
         AudioManager.Instance?.Play(AudioManager.SoundType.ButtonClick);
-        AudioManager.Instance?.StopAmbiance();
-        menuCanvasObj.SetActive(false);
-
-        // YENİ: Havalı Giriş Sekansını (Intro) Başlat
-        if (IntroController.Instance != null && GameManager.Instance != null)
-        {
-            IntroController.Instance.PlayIntro(GameManager.Instance.currentPlayer, () => {
-                GameManager.Instance.StartGameFromMenu();
-            });
-        }
-        else
-        {
-            // Eğer Introsuz kalırsa direkt başlat (Failsafe)
-            GameManager.Instance?.StartGameFromMenu();
-        }
+        lobbyPopup.SetActive(true);
+        StartCoroutine(SlidePopup(lobbyPopup, true));
     }
 
     private void OnRulesClicked()
     {
         AudioManager.Instance?.Play(AudioManager.SoundType.ButtonClick);
-        if (rulesPopup != null)
+        rulesPopup.SetActive(true);
+        StartCoroutine(SlidePopup(rulesPopup, true));
+    }
+
+    private IEnumerator SlidePopup(GameObject popup, bool show)
+    {
+        RectTransform rt = popup.GetComponent<RectTransform>();
+        Vector2 hiddenPos = new Vector2(0, -2000);
+        Vector2 visiblePos = Vector2.zero;
+
+        if (show)
         {
-            rulesPopup.SetActive(true);
+            rt.anchoredPosition = hiddenPos;
+            popup.SetActive(true);
+            float t = 0;
+            while (t < 1f)
+            {
+                t += Time.deltaTime * 3f;
+                rt.anchoredPosition = Vector2.Lerp(hiddenPos, visiblePos, Mathf.SmoothStep(0, 1, t));
+                yield return null;
+            }
         }
+        else
+        {
+            float t = 0;
+            while (t < 1f)
+            {
+                t += Time.deltaTime * 3f;
+                rt.anchoredPosition = Vector2.Lerp(visiblePos, hiddenPos, Mathf.SmoothStep(0, 1, t));
+                yield return null;
+            }
+            popup.SetActive(false);
+        }
+    }
+    private ushort FindAvailablePort(ushort startPort)
+    {
+        for (ushort port = startPort; port < startPort + 10; port++)
+        {
+            try
+            {
+                using (var socket = new System.Net.Sockets.Socket(
+                    System.Net.Sockets.AddressFamily.InterNetwork,
+                    System.Net.Sockets.SocketType.Dgram,
+                    System.Net.Sockets.ProtocolType.Udp))
+                {
+                    socket.Bind(new System.Net.IPEndPoint(System.Net.IPAddress.Loopback, port));
+                    return port; // Bulundu!
+                }
+            }
+            catch
+            {
+                // Port kullanımda, bir sonrakini dene
+            }
+        }
+        return startPort; // Fallback
+    }
+
+    private void StartHostGame(int playerCount)
+    {
+        StartCoroutine(StartHostGameCoroutine(playerCount));
+    }
+
+    private IEnumerator StartHostGameCoroutine(int playerCount)
+    {
+        Debug.Log($"[MainMenuManager] StartHostGameCoroutine called with playerCount = {playerCount}");
+        
+        menuCanvasObj.SetActive(false);
+        AudioManager.Instance?.StopAmbiance();
+
+        // Eğer NetworkManager zaten dinlemiyorsa, boşta olan bir port bularak StartHost çağır
+        if (!NetworkManager.Singleton.IsListening)
+        {
+            var transport = NetworkManager.Singleton.GetComponent<UnityTransport>();
+            if (transport != null)
+            {
+                ushort freePort = FindAvailablePort(7777);
+                transport.ConnectionData.Port = freePort;
+                Debug.Log($"[MainMenuManager] Dynamic Port Selection: Bound Host to free port {freePort}");
+            }
+            
+            // SİHİRLİ DOKUNUŞ: Klon önbellek uyuşmazlığını engellemek için prefab zorlamasını kapatıyoruz!
+            NetworkManager.Singleton.NetworkConfig.ForceSamePrefabs = false;
+            
+            // SİHİRLİ DOKUNUŞ 2: Kullanıcı sahneyi (Untitled) kaydetmediği için SceneManagement çöküyor, bunu kapatıyoruz!
+            NetworkManager.Singleton.NetworkConfig.EnableSceneManagement = false;
+            
+            // PREFAB'LARI GÜVENLİ ŞEKİLDE KAYDET (Çift kayıt hatasını önleyerek)
+            GameObject magnetPrefab = Resources.Load<GameObject>("MagnetPiecePrefab");
+            GameObject netGmPrefab = Resources.Load<GameObject>("GameManagerPrefab");
+            
+            if (magnetPrefab != null && !NetworkManager.Singleton.NetworkConfig.Prefabs.Contains(magnetPrefab))
+                NetworkManager.Singleton.AddNetworkPrefab(magnetPrefab);
+                
+            if (netGmPrefab != null && !NetworkManager.Singleton.NetworkConfig.Prefabs.Contains(netGmPrefab))
+                NetworkManager.Singleton.AddNetworkPrefab(netGmPrefab);
+            
+            NetworkManager.Singleton.StartHost();
+        }
+
+        // NetworkManager'ın tamamen aktif olmasını (IsListening = true) bekle
+        float timeout = 2.0f;
+        while (!NetworkManager.Singleton.IsListening && timeout > 0f)
+        {
+            timeout -= Time.deltaTime;
+            yield return null;
+        }
+
+        if (!NetworkManager.Singleton.IsListening)
+        {
+            Debug.LogError("[MainMenuManager] NetworkManager failed to start listening!");
+            yield break;
+        }
+
+        // Eğer zaten bir GameManager varsa (SceneBootstrap'tan kalma), onu kullan
+        if (GameManager.Instance != null)
+        {
+            Debug.Log($"[MainMenuManager] Using existing GameManager, starting with {playerCount} players");
+            GameManager.Instance.StartGameFromMenu(playerCount);
+            yield break;
+        }
+
+        GameObject gmPrefab = Resources.Load<GameObject>("GameManagerPrefab");
+        if (gmPrefab != null)
+        {
+            GameObject gmObj = Instantiate(gmPrefab);
+            gmObj.GetComponent<NetworkObject>().Spawn();
+            gmObj.GetComponent<GameManager>().StartGameFromMenu(playerCount);
+            Debug.Log($"[MainMenuManager] Spawned new GameManager with {playerCount} players");
+        }
+        else
+        {
+            Debug.LogError("GameManagerPrefab not found in Resources!");
+        }
+    }
+
+    private void JoinGame()
+    {
+        menuCanvasObj.SetActive(false);
+        AudioManager.Instance?.StopAmbiance();
+
+        string ip = ipInput.text;
+        if (string.IsNullOrEmpty(ip)) ip = "127.0.0.1";
+        
+        var transport = NetworkManager.Singleton.GetComponent<UnityTransport>();
+        transport.ConnectionData.Address = ip;
+        
+        // SİHİRLİ DOKUNUŞ: Klon önbellek uyuşmazlığını engellemek için prefab zorlamasını kapatıyoruz!
+        NetworkManager.Singleton.NetworkConfig.ForceSamePrefabs = false;
+
+        // SİHİRLİ DOKUNUŞ 2: Kullanıcı sahneyi (Untitled) kaydetmediği için SceneManagement çöküyor, bunu kapatıyoruz!
+        NetworkManager.Singleton.NetworkConfig.EnableSceneManagement = false;
+
+        // PREFAB'LARI GÜVENLİ ŞEKİLDE KAYDET (Çift kayıt hatasını önleyerek)
+        GameObject magnetPrefab = Resources.Load<GameObject>("MagnetPiecePrefab");
+        GameObject netGmPrefab = Resources.Load<GameObject>("GameManagerPrefab");
+        
+        if (magnetPrefab != null && !NetworkManager.Singleton.NetworkConfig.Prefabs.Contains(magnetPrefab))
+            NetworkManager.Singleton.AddNetworkPrefab(magnetPrefab);
+            
+        if (netGmPrefab != null && !NetworkManager.Singleton.NetworkConfig.Prefabs.Contains(netGmPrefab))
+            NetworkManager.Singleton.AddNetworkPrefab(netGmPrefab);
+        
+        NetworkManager.Singleton.StartClient();
     }
 }

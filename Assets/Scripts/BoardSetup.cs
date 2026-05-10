@@ -1,25 +1,20 @@
 using UnityEngine;
 
-/// <summary>
-/// Oyun sahasını oluşturur - Dairesel alan + ip sınırı (URP uyumlu)
-/// Portrait mobil ekrana uygun boyut
-/// </summary>
 public class BoardSetup : MonoBehaviour
 {
+    public static BoardSetup Instance { get; private set; }
+
     [Header("Saha Ayarları")]
-    public float boardRadiusX = 3.9f; // Kenarlarda azıcık boşluk kalması için ufaltıldı
-    public float boardRadiusZ = 4.9f; // Taş panelleriyle çakışmayı engellemek için küçültüldü
+    public float boardRadiusX = 2.5f;
+    public float boardRadiusZ = 3.2f;
     public int ropeSegments = 64;
     public float ropeHeight = 0.05f;
 
-    private GameObject boardObject;
-    private LineRenderer ropeRenderer;
-
     private void Awake()
     {
-        // Inspector'dan eski büyük değerlerin okunmasını önlemek için zorla eziyoruz:
-        boardRadiusX = 3.9f;
-        boardRadiusZ = 4.9f;
+        Instance = this;
+        boardRadiusX = 2.5f;
+        boardRadiusZ = 3.2f;
     }
 
     private Material CreateURPMaterial(Color color, float smoothness = 0.5f, float metallic = 0f)
@@ -38,86 +33,99 @@ public class BoardSetup : MonoBehaviour
         return new Material(unlitShader);
     }
 
-    public void CreateBoard()
+    public void CreateBoard(int playerCount = 2)
     {
-        CreateTrackRing();    // Önce koyu çevre halkası
-        CreatePlayingField(); // Üzeri sarı saha
-        CreateRopeBoundary();
+        // Temizle
+        foreach (Transform child in transform) {
+            Destroy(child.gameObject);
+        }
+
+        CreateTrackRing();
+        CreatePlayingField();
+        CreateRopeBoundary(playerCount);
         CreateFloor();
         CreatePhysicalBoundary();
+        CreateParticles();
     }
 
-    // Referanstaki koyu iç çevre halkası (sarı alan ile sınır arası)
-    // Koyu iç çevre halkası
     private void CreateTrackRing()
     {
         GameObject trackObj = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
         trackObj.name = "TrackRing";
+        trackObj.transform.SetParent(transform, false);
         trackObj.transform.position = new Vector3(0, -0.01f, 0); 
         trackObj.transform.localScale = new Vector3((boardRadiusX + 0.3f) * 2, 0.04f, (boardRadiusZ + 0.3f) * 2);
 
         MeshRenderer renderer = trackObj.GetComponent<MeshRenderer>();
-        renderer.material = CreateURPMaterial(
-            new Color(0.1f, 0.1f, 0.12f),  // Koyu gri siyahımsı çerçeve (referanstaki gibi)
-            smoothness: 0.2f,
-            metallic: 0f
-        );
-
+        renderer.material = CreateURPMaterial(new Color(0.1f, 0.1f, 0.12f), 0.2f, 0f);
         Destroy(trackObj.GetComponent<Collider>());
     }
 
     private void CreatePlayingField()
     {
-        boardObject = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+        GameObject boardObject = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
         boardObject.name = "GameBoard";
+        boardObject.transform.SetParent(transform, false);
         boardObject.transform.position = Vector3.zero;
         boardObject.transform.localScale = new Vector3(boardRadiusX * 2, 0.05f, boardRadiusZ * 2);
 
         MeshRenderer renderer = boardObject.GetComponent<MeshRenderer>();
-        // SARI/ALTIN zemin - Hocanın referansına göre
-        renderer.material = CreateURPMaterial(
-            new Color(0.95f, 0.78f, 0.05f),
-            smoothness: 0.4f,
-            metallic: 0.1f
-        );
+        renderer.material = CreateURPMaterial(new Color(0.95f, 0.78f, 0.05f), 0.4f, 0.1f);
 
         boardObject.GetComponent<Collider>().isTrigger = false;
         Rigidbody boardRb = boardObject.AddComponent<Rigidbody>();
         boardRb.isKinematic = true;
     }
 
-    private void CreateRopeBoundary()
+    private void CreateRopeBoundary(int playerCount)
     {
-        // Alt Yarı (Neon Vivid Cyan - Oyuncu 1)
-        CreateNeonArc("NeonGlow_P1_Bottom", new Color(0.1f, 0.85f, 1f), Mathf.PI, 2f * Mathf.PI);
-        
-        // Üst Yarı (Neon Bright Red - Oyuncu 2)
-        CreateNeonArc("NeonGlow_P2_Top", new Color(1f, 0.1f, 0.1f), 0f, Mathf.PI);
-
-        // Ortadan geçen yatay şerit
-        CreateCenterDivideLine();
+        if (playerCount <= 2)
+        {
+            CreateNeonArc("NeonGlow_P1_Bottom", new Color(0.1f, 0.85f, 1f), Mathf.PI, 2f * Mathf.PI);
+            CreateNeonArc("NeonGlow_P2_Top", new Color(1f, 0.1f, 0.1f), 0f, Mathf.PI);
+            CreateDivideLine(true);
+        }
+        else if (playerCount == 3)
+        {
+            CreateNeonArc("NeonGlow_P1_Bottom", new Color(0.1f, 0.85f, 1f), 1.33f * Mathf.PI, 1.66f * Mathf.PI);
+            CreateNeonArc("NeonGlow_P2_Top", new Color(1f, 0.1f, 0.1f), 0.33f * Mathf.PI, 0.66f * Mathf.PI);
+            CreateNeonArc("NeonGlow_P3_Left", new Color(0.2f, 1f, 0.2f), 0.66f * Mathf.PI, 1.33f * Mathf.PI);
+            // Çizgiler karmaşık olabilir, bu yüzden şimdilik merkezde + çizelim
+            CreateDivideLine(true);
+            CreateDivideLine(false);
+        }
+        else
+        {
+            CreateNeonArc("NeonGlow_P1_Bottom", new Color(0.1f, 0.85f, 1f), 1.25f * Mathf.PI, 1.75f * Mathf.PI);
+            CreateNeonArc("NeonGlow_P2_Top", new Color(1f, 0.1f, 0.1f), 0.25f * Mathf.PI, 0.75f * Mathf.PI);
+            CreateNeonArc("NeonGlow_P3_Left", new Color(0.2f, 1f, 0.2f), 0.75f * Mathf.PI, 1.25f * Mathf.PI);
+            CreateNeonArc("NeonGlow_P4_Right", new Color(1f, 0.8f, 0.1f), -0.25f * Mathf.PI, 0.25f * Mathf.PI);
+            CreateDivideLine(true);
+            CreateDivideLine(false);
+        }
     }
 
     private void CreateNeonArc(string name, Color emitColor, float startAngle, float endAngle)
     {
         GameObject arcObj = new GameObject(name);
+        arcObj.transform.SetParent(transform, false);
         arcObj.transform.position = new Vector3(0, ropeHeight + 0.05f, 0);
 
         LineRenderer lr = arcObj.AddComponent<LineRenderer>();
         int segments = ropeSegments / 2;
         lr.positionCount = segments + 1;
-        lr.startWidth = 0.20f; // 0.15'den 0.20'ye (Daha belirgin)
+        lr.startWidth = 0.20f;
         lr.endWidth = 0.20f;
         lr.loop = false;
         lr.useWorldSpace = true;
 
         Material mat = CreateUnlitMaterial();
         mat.SetColor("_BaseColor", emitColor);
-        mat.SetColor("_EmissionColor", emitColor * 3.0f); // 1.5'den 3.0'a (Ciddi bir neon etkisi)
+        mat.SetColor("_EmissionColor", emitColor * 3.0f);
         mat.EnableKeyword("_EMISSION");
         lr.material = mat;
 
-        float adjX = boardRadiusX + 0.15f; // Siyah dış çerçevenin hemen üstüne/dışına doğru
+        float adjX = boardRadiusX + 0.15f;
         float adjZ = boardRadiusZ + 0.15f;
         float angleStep = (endAngle - startAngle) / segments;
 
@@ -130,9 +138,10 @@ public class BoardSetup : MonoBehaviour
         }
     }
 
-    private void CreateCenterDivideLine()
+    private void CreateDivideLine(bool horizontal)
     {
-        GameObject lineObj = new GameObject("CenterDivideLine");
+        GameObject lineObj = new GameObject("DivideLine");
+        lineObj.transform.SetParent(transform, false);
         lineObj.transform.position = new Vector3(0, ropeHeight + 0.05f, 0);
 
         LineRenderer lr = lineObj.AddComponent<LineRenderer>();
@@ -143,7 +152,6 @@ public class BoardSetup : MonoBehaviour
 
         Material mat = CreateUnlitMaterial();
         mat.SetColor("_BaseColor", new Color(1f, 1f, 1f, 0.3f));
-        
         mat.SetFloat("_Surface", 1);
         mat.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
         mat.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
@@ -153,24 +161,30 @@ public class BoardSetup : MonoBehaviour
         mat.SetOverrideTag("RenderType", "Transparent");
         lr.material = mat;
 
-        // Dikey modda ortadan geçen çizgi yatay (X ekseninde eksi'den artı'ya) olur
-        lr.SetPosition(0, new Vector3(-boardRadiusX, ropeHeight + 0.06f, 0));
-        lr.SetPosition(1, new Vector3(boardRadiusX, ropeHeight + 0.06f, 0));
+        if (horizontal)
+        {
+            lr.SetPosition(0, new Vector3(-boardRadiusX, ropeHeight + 0.06f, 0));
+            lr.SetPosition(1, new Vector3(boardRadiusX, ropeHeight + 0.06f, 0));
+        }
+        else
+        {
+            lr.SetPosition(0, new Vector3(0, ropeHeight + 0.06f, -boardRadiusZ));
+            lr.SetPosition(1, new Vector3(0, ropeHeight + 0.06f, boardRadiusZ));
+        }
     }
 
     private void CreateFloor()
     {
         GameObject floor = GameObject.CreatePrimitive(PrimitiveType.Plane);
         floor.name = "TableFloor";
-        floor.transform.position = new Vector3(0, -0.4f, 0); // Masayı biraz daha aşağı alalım
-        floor.transform.localScale = new Vector3(4, 1, 4); // Daha da geniş masa (16:9 için)
+        floor.transform.SetParent(transform, false);
+        floor.transform.position = new Vector3(0, -0.4f, 0);
+        floor.transform.localScale = new Vector3(4, 1, 4);
 
         MeshRenderer renderer = floor.GetComponent<MeshRenderer>();
-        
         Shader s = Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard");
         Material mat = new Material(s);
         
-        // Tahta dokusunu yükle
         try {
             string texPath = System.IO.Path.Combine(Application.dataPath, "Textures", "wood_bg.png");
             if (System.IO.File.Exists(texPath))
@@ -179,17 +193,15 @@ public class BoardSetup : MonoBehaviour
                 Texture2D woodTex = new Texture2D(2, 2, TextureFormat.RGB24, false);
                 woodTex.LoadImage(fd);
                 mat.mainTexture = woodTex;
-                mat.mainTextureScale = new Vector2(4f, 4f); // Ahşap parkeler tekrar etsin
-                mat.SetFloat("_Smoothness", 0.4f); // Hafif cilalı masa
+                mat.mainTextureScale = new Vector2(4f, 4f);
+                mat.SetFloat("_Smoothness", 0.4f);
             }
             else
             {
-                // Doku yoksa fallback
                 mat.SetColor("_BaseColor", new Color(0.28f, 0.16f, 0.07f));
                 mat.SetFloat("_Smoothness", 0.6f);
             }
-        } catch (System.Exception e) {
-            Debug.LogWarning("[BoardSetup] Wood texture load failed: " + e.Message);
+        } catch {
             mat.SetColor("_BaseColor", new Color(0.28f, 0.16f, 0.07f));
             mat.SetFloat("_Smoothness", 0.6f);
         }
@@ -200,9 +212,10 @@ public class BoardSetup : MonoBehaviour
     private void CreatePhysicalBoundary()
     {
         GameObject boundaryParent = new GameObject("PhysicalBoundary");
+        boundaryParent.transform.SetParent(transform, false);
         boundaryParent.transform.position = Vector3.zero;
 
-        int colliderCount = 32; // Daha fazla parça ile pürüzsüz elips
+        int colliderCount = 32;
         float adjX = boardRadiusX - 0.05f;
         float adjZ = boardRadiusZ - 0.05f;
         float angleStep = 360f / colliderCount;
@@ -212,14 +225,7 @@ public class BoardSetup : MonoBehaviour
             float angle = i * angleStep;
             float angleRad = angle * Mathf.Deg2Rad;
             
-            // Elips üzerindeki nokta
-            Vector3 pos = new Vector3(
-                Mathf.Cos(angleRad) * adjX,
-                0.2f,
-                Mathf.Sin(angleRad) * adjZ
-            );
-
-            // Teğet açısı (elips için türevden)
+            Vector3 pos = new Vector3(Mathf.Cos(angleRad) * adjX, 0.2f, Mathf.Sin(angleRad) * adjZ);
             float nextAngleRad = (angle + 1f) * Mathf.Deg2Rad;
             Vector3 nextPos = new Vector3(Mathf.Cos(nextAngleRad) * adjX, 0.2f, Mathf.Sin(nextAngleRad) * adjZ);
             Vector3 tangent = (nextPos - pos).normalized;
@@ -235,9 +241,55 @@ public class BoardSetup : MonoBehaviour
         }
     }
 
+    private void CreateParticles()
+    {
+        GameObject particles = new GameObject("BackgroundParticles");
+        particles.transform.SetParent(transform, false);
+        particles.transform.position = new Vector3(0, -0.2f, 0);
+
+        ParticleSystem ps = particles.AddComponent<ParticleSystem>();
+        
+        // ParticleSystem'i önce durdur, ayarla, sonra başlat
+        ps.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
+        
+        var main = ps.main;
+        main.duration = 5f;
+        main.loop = true;
+        main.startLifetime = 4f;
+        main.startSpeed = 0.5f;
+        main.startSize = 0.08f;
+        main.startColor = new Color(0.2f, 0.8f, 1f, 0.3f);
+        main.maxParticles = 80;
+
+        var emission = ps.emission;
+        emission.rateOverTime = 15f;
+
+        var shape = ps.shape;
+        shape.shapeType = ParticleSystemShapeType.Box;
+        shape.scale = new Vector3(10f, 0.2f, 14f);
+
+        // Tüm velocity eksenlerini aynı modda (TwoConstants) ayarla
+        var vel = ps.velocityOverLifetime;
+        vel.enabled = true;
+        vel.x = new ParticleSystem.MinMaxCurve(-0.1f, 0.1f);
+        vel.y = new ParticleSystem.MinMaxCurve(0.2f, 0.6f);
+        vel.z = new ParticleSystem.MinMaxCurve(-0.1f, 0.1f);
+
+        ParticleSystemRenderer renderer = ps.GetComponent<ParticleSystemRenderer>();
+        Shader s = Shader.Find("Universal Render Pipeline/Particles/Unlit") ?? Shader.Find("Particles/Standard Unlit");
+        if (s != null)
+        {
+            Material m = new Material(s);
+            m.SetColor("_BaseColor", Color.white);
+            renderer.material = m;
+        }
+        
+        // Ayarlar bittikten sonra tekrar başlat
+        ps.Play();
+    }
+
     public bool IsWithinBounds(Vector3 position)
     {
-        // Elips içi kontrol: (x^2 / a^2) + (z^2 / b^2) < 1
         float localX = position.x;
         float localZ = position.z;
         float a = boardRadiusX - 0.2f;
